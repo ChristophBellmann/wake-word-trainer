@@ -1,0 +1,277 @@
+"""HTTP service on the training computer, for Home Assistant (Wake Word Collector).
+
+    GET  /health                        no token
+    GET  /v1/status                     progress, best result, GPU, profiles
+    POST /v1/start   {"profile": id}    start a run with a profile
+    POST /v1/stop                       stop the run (keeps finished rounds)
+    GET  /v1/report                     evaluation of the exported model
+    GET  /v1/model/<slug>.json|.tflite  the exported model for ESPHome
+    POST /v1/speaker_test {"route": r}  play one held-out recording through a
+                                        loudspeaker, to test a satellite live
+
+Every /v1 request needs `Authorization: Bearer <token>`. Network callers can
+only choose among configured profiles and routes: no commands, paths or
+settings reach the service.
+
+Configuration (YAML):
+
+    project: ~/wakeword/hey_jarvis          # project folder with wakeword.yaml
+    downloads: ~/wakeword/downloads         # optional, shared downloads
+    token_file: ~/.config/wake-word-trainer/service.token
+    bind: 0.0.0.0
+    port: 10701
+    profiles:                               # optional; these are the defaults
+      quick: {label: Quick, rounds: 0, steps: 10000}
+      recommended: {label: Recommended, rounds: 2}
+      thorough: {label: Thorough, rounds: 4, steps: 40000}
+      validate: {label: Check data only, prepare_only: true}
+    speaker_test:                           # optional
+      routes:
+        speakers: [paplay, "{file}"]
+        usb: [aplay, -D, "plughw:2,0", "{file}"]
+"""
+
+from __future__ import annotations
+
+import hmac
+import json
+import os
+import random
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from . import audio
+from .project import Project
+from .state import State, now, read
+
+DEFAULT_PROFILES = {
+    "quick": {"label": "Quick", "rounds": 0, "steps": 10000},
+    "recommended": {"label": "Recommended", "rounds": 2},
+    "thorough": {"label": "Thorough", "rounds": 4, "steps": 40000},
+    "validate": {"label": "Check data only", "prepare_only": True},
+}
+MODEL_FILE = re.compile(r"^[a-z0-9_]{1,64}\.(json|tflite)$")
+
+
+class Service:
+    def __init__(self, config: dict[str, Any]):
+        self.project = Project.load(config["project"])
+        self.downloads = Path(config["downloads"]).expanduser() if config.get("downloads") else None
+        token_file = Path(config["token_file"]).expanduser()
+        self.token = token_file.read_text(encoding="utf-8").strip()
+        if len(self.token) < 16:
+            raise SystemExit(f"Token in {token_file} is too short (at least 16 characters)")
+        self.profiles: dict[str, dict] = config.get("profiles") or DEFAULT_PROFILES
+        self.routes: dict[str, list[str]] = (config.get("speaker_test") or {}).get("routes") or {}
+        self.process: subprocess.Popen | None = None
+        self.lock = threading.Lock()
+        self.speaker_lock = threading.Lock()
+        state = read(self.project)
+        if state.get("state") in ("running", "starting"):
+            State(self.project).update(state="failed", ended_at=now(), last_error="Interrupted: the service restarted")
+
+    # -- Runs -------------------------------------------------------------------
+
+    def running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def start(self, profile_id: str) -> tuple[int, dict]:
+        profile = self.profiles.get(profile_id)
+        if profile is None:
+            return 400, {"error": "unknown profile", "profiles": sorted(self.profiles)}
+        with self.lock:
+            if self.running():
+                return 409, {"error": "a run is active"}
+            command = [sys.executable, "-m", "wake_word_trainer", "-p", str(self.project.root)]
+            if self.downloads:
+                command += ["--downloads", str(self.downloads)]
+            command += ["run", "--profile", profile_id]
+            if profile.get("prepare_only"):
+                command.append("--prepare-only")
+            if "rounds" in profile:
+                command += ["--rounds", str(int(profile["rounds"]))]
+            if "steps" in profile:
+                command += ["--steps", str(int(profile["steps"]))]
+            State(self.project).update(state="starting", profile=profile_id, started_at=now(), message="")
+            log = self.project.path("service.log").open("a", encoding="utf-8")
+            self.process = subprocess.Popen(
+                command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=self.project.root
+            )
+        return 202, {"started": profile_id}
+
+    def stop(self) -> tuple[int, dict]:
+        with self.lock:
+            if not self.running():
+                return 200, {"stopped": False}
+            assert self.process is not None
+            os.killpg(self.process.pid, signal.SIGINT)
+            try:
+                self.process.wait(timeout=40)
+            except subprocess.TimeoutExpired:
+                os.killpg(self.process.pid, signal.SIGTERM)
+                self.process.wait(timeout=10)
+        state = read(self.project)
+        if state.get("state") in ("running", "starting"):
+            State(self.project).update(state="stopped", ended_at=now(), message="Stopped")
+        return 200, {"stopped": True}
+
+    def status(self) -> dict:
+        state = read(self.project)
+        if state.get("state") in ("running", "starting") and not self.running():
+            state["state"] = "failed"
+            state["last_error"] = state.get("last_error") or "The run ended unexpectedly; see service.log"
+        state.update(
+            workstation_online=True,
+            wake_word=self.project.config["wake_word"],
+            slug=self.project.slug,
+            gpu=gpu(),
+            profiles={key: value.get("label", key) for key, value in self.profiles.items()},
+            speaker_routes=sorted(self.routes),
+        )
+        return state
+
+    # -- Speaker test -------------------------------------------------------------
+
+    def speaker_test(self, route: str) -> tuple[int, dict]:
+        command = self.routes.get(route)
+        if command is None:
+            return 400, {"error": "unknown route", "routes": sorted(self.routes)}
+        clips = audio.wavs(self.project.recordings / "eval") or audio.wavs(self.project.recordings / "train")
+        if not clips:
+            return 404, {"error": "no recordings; run fetch first"}
+        clip = random.choice(clips)
+        if not self.speaker_lock.acquire(blocking=False):
+            return 409, {"error": "already playing"}
+        try:
+            result = subprocess.run(
+                [part.replace("{file}", str(clip)) for part in command], capture_output=True, timeout=30, check=False
+            )
+        finally:
+            self.speaker_lock.release()
+        if result.returncode != 0:
+            return 500, {"error": "playback failed", "detail": result.stderr.decode(errors="replace")[-300:]}
+        return 200, {"route": route, "clip": str(clip.relative_to(self.project.root))}
+
+    # -- Files ----------------------------------------------------------------------
+
+    def model_file(self, name: str) -> Path | None:
+        if not MODEL_FILE.match(name) or not name.startswith(self.project.slug + "."):
+            return None
+        path = self.project.export_dir / name
+        return path if path.is_file() else None
+
+
+def gpu() -> dict:
+    """GPU load, best effort: AMD (rocm-smi) or NVIDIA (nvidia-smi)."""
+    if shutil.which("nvidia-smi"):
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        try:
+            use, used, total = (float(value) for value in result.stdout.splitlines()[0].split(","))
+            return {"use_percent": use, "memory_percent": round(100 * used / total, 1)}
+        except (ValueError, IndexError, ZeroDivisionError):
+            return {}
+    if shutil.which("rocm-smi"):
+        result = subprocess.run(
+            ["rocm-smi", "--showuse", "--showmemuse", "--json"], capture_output=True, text=True, timeout=5, check=False
+        )
+        try:
+            card = next(iter(json.loads(result.stdout).values()))
+            use = float(str(card.get("GPU use (%)", 0)).strip("%"))
+            memory = float(str(card.get("GPU Memory Allocated (VRAM%)", card.get("GPU memory use (%)", 0))).strip("%"))
+            return {"use_percent": use, "memory_percent": memory}
+        except (ValueError, StopIteration, AttributeError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
+def handler(service: Service):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "wake-word-trainer"
+
+        def log_message(self, *args):
+            pass
+
+        def _send(self, status: int, payload: Any, content_type: str = "application/json") -> None:
+            body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _authorized(self) -> bool:
+            header = self.headers.get("Authorization", "")
+            given = header[7:] if header.startswith("Bearer ") else header
+            return hmac.compare_digest(given.encode(), service.token.encode())
+
+        def _body(self) -> dict:
+            length = min(int(self.headers.get("Content-Length") or 0), 4096)
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except json.JSONDecodeError:
+                return {}
+            return data if isinstance(data, dict) else {}
+
+        def do_GET(self):
+            path = self.path.split("?")[0]
+            if path == "/health":
+                return self._send(200, {"ok": True})
+            if not self._authorized():
+                return self._send(401, {"error": "unauthorized"})
+            if path == "/v1/status":
+                return self._send(200, service.status())
+            if path == "/v1/report":
+                report = service.project.path("report.json")
+                return self._send(200, report.read_bytes()) if report.is_file() else self._send(404, {})
+            if path.startswith("/v1/model/"):
+                model = service.model_file(path.rsplit("/", 1)[-1])
+                if model is None:
+                    return self._send(404, {"error": "no exported model"})
+                kind = "application/json" if model.suffix == ".json" else "application/octet-stream"
+                return self._send(200, model.read_bytes(), kind)
+            return self._send(404, {"error": "not found"})
+
+        def do_POST(self):
+            if not self._authorized():
+                return self._send(401, {"error": "unauthorized"})
+            body = self._body()
+            if self.path == "/v1/start":
+                return self._send(*service.start(str(body.get("profile", "recommended"))))
+            if self.path == "/v1/stop":
+                return self._send(*service.stop())
+            if self.path == "/v1/speaker_test":
+                return self._send(*service.speaker_test(str(body.get("route", ""))))
+            return self._send(404, {"error": "not found"})
+
+    return Handler
+
+
+def make_server(config: dict[str, Any]) -> tuple[ThreadingHTTPServer, Service]:
+    service = Service(config)
+    server = ThreadingHTTPServer((config.get("bind", "0.0.0.0"), int(config.get("port", 10701))), handler(service))
+    return server, service
+
+
+def serve(config_path: Path) -> None:
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    server, _ = make_server(config)
+    print(f"Serving on {server.server_address[0]}:{server.server_address[1]}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -47,8 +50,12 @@ def feature_sets(project: Project, downloads: Path) -> list[dict]:
     sets = []
     for name, truth, strategy in (
         ("own", True, "truncate_start"),
+        ("own_hard", True, "truncate_start"),
         ("tts", True, "truncate_start"),
-        ("tts_negative", False, "truncate_start"),
+        ("own_negative", False, "random"),
+        ("speech_extra", False, "random"),
+        ("mined", False, "random"),
+        ("tts_negative", False, "random"),
     ):
         if (project.features / name).is_dir():
             sets.append(_feature_set(project.features / name, weights[name], truth, strategy))
@@ -89,9 +96,36 @@ def config(project: Project, downloads: Path) -> dict:
     }
 
 
-def train(project: Project, downloads: Path, resume: bool = True, runner=subprocess.run) -> Path:
-    project.model_dir.mkdir(parents=True, exist_ok=True)
-    config_path = project.model_dir / "training_parameters.yaml"
+STEP_LINE = re.compile(r"Step #(\d+)")
+
+
+def _stream(command: list[str], log_path: Path, on_step: Callable[[int], None] | None) -> int:
+    """Run microWakeWord, echo and log its output, report training steps as they pass."""
+    with log_path.open("a", encoding="utf-8") as log:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            sys.stdout.write(line)
+            log.write(line)
+            match = STEP_LINE.search(line)
+            if match and on_step:
+                on_step(int(match.group(1)))
+        return process.wait()
+
+
+def train(
+    project: Project,
+    downloads: Path,
+    resume: bool = True,
+    runner=None,
+    on_step: Callable[[int], None] | None = None,
+) -> Path:
+    if not resume:
+        # microWakeWord creates the folder itself and refuses an existing one unless it resumes.
+        shutil.rmtree(project.model_dir, ignore_errors=True)
+    config_path = project.path("training_parameters.yaml")
     config_path.write_text(yaml.safe_dump(config(project, downloads), sort_keys=False), encoding="utf-8")
     command = [
         sys.executable,
@@ -116,8 +150,12 @@ def train(project: Project, downloads: Path, resume: bool = True, runner=subproc
         "best_weights",
         *MODEL_ARGS,
     ]
-    result = runner(command, check=False)
     model = project.model_dir / TFLITE
-    if result.returncode != 0 or not model.is_file():
-        raise ProjectError(f"Training failed (exit {result.returncode}); see the output above")
+    model.unlink(missing_ok=True)  # never mistake the previous round's model for this one
+    if runner is not None:
+        returncode = runner(command, check=False).returncode
+    else:
+        returncode = _stream(command, project.path("training.log"), on_step)
+    if returncode != 0 or not model.is_file():
+        raise ProjectError(f"Training failed (exit {returncode}); see training.log")
     return model

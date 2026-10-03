@@ -1,0 +1,15 @@
+# wake-word-trainer serve --config service.yaml
+project: ~/wakeword/hey_jarvis              # project folder with wakeword.yaml
+downloads: ~/wakeword/downloads             # optional: shared downloads
+token_file: ~/.config/wake-word-trainer/service.token   # >= 16 characters
+bind: 0.0.0.0
+port: 10701
+profiles:                                   # what Home Assistant can start
+  quick: {label: Quick, rounds: 0, steps: 10000}
+  recommended: {label: Recommended, rounds: 2}
+  thorough: {label: Thorough, rounds: 4, steps: 40000}
+  validate: {label: Check data only, prepare_only: true}
+speaker_test:                               # optional: play held-out recordings
+  routes:
+    speakers: [paplay, "{file}"]
+    usb: [aplay, -D, "plughw:2,0", "{file}"]

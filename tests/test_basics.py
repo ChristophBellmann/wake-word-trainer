@@ -242,6 +242,9 @@ def test_choose_lowest_cutoff_within_budget():
     faph = np.zeros(256)
     assert choose(faph, 0.5) == 0
     assert choose(faph, 0.5, minimum=0.5) == 128  # 128/255 is the first step >= 0.5
+    share = np.where(np.arange(256) < 200, 0.5, 0.0)  # own negatives trigger below step 200
+    assert choose(faph, 0.5, 0.5, share, 0.05) == 200
+    assert choose(faph, 0.5, 0.5, share, 0.6) == 128
 
 
 # -- Training config and export -------------------------------------------------------

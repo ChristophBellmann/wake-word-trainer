@@ -46,27 +46,65 @@ def fake_downloads(root):
 def test_train_evaluate_export(tmp_path):
     for index in range(60):
         write_wav(tmp_path / "mine" / f"{index}.wav", np.concatenate([noise(0.2, index, 0.005), chirp(seed=index)]))
+    for index in range(6):
+        write_wav(tmp_path / "hard" / f"{index}.wav", chirp(seed=100 + index) * 0.2 + noise(0.8, index, 0.02))
+    for index in range(20):  # own recordings without the wake word: falling tones
+        write_wav(tmp_path / "neg" / f"{index}.wav", descending(200 + index))
+    for index in range(30):
+        write_wav(tmp_path / "speech" / f"{index}.wav", noise(2.0, 400 + index, 0.05))
     project = tmp_path / "project"
     downloads = tmp_path / "downloads"
     fake_downloads(downloads)
     assert main(["-p", str(project), "init", "Hey Nova"]) == 0
     config = (project / "wakeword.yaml").read_text()
     config += (
-        f"recordings:\n  folders: [{tmp_path / 'mine'}]\n"
-        "training: {steps: 400, batch_size: 32, eval_step_interval: 100, own_repeat: 2}\n"
+        "recordings:\n"
+        f"  folders: [{tmp_path / 'mine'}]\n"
+        f"  hard_folders: [{tmp_path / 'hard'}]\n"
+        f"  negative_folders: [{tmp_path / 'neg'}]\n"
+        f"negatives: {{speech_folders: [{tmp_path / 'speech'}], speech_clips: 20}}\n"
+        "training: {steps: 300, batch_size: 32, eval_step_interval: 100, own_repeat: 2, mining_samples: 300}\n"
         "evaluation: {max_false_accepts_per_hour: 5}\n"
     )
     (project / "wakeword.yaml").write_text(config)
 
     common = ["-p", str(project), "--downloads", str(downloads)]
-    assert main([*common, "run"]) == 0
+    assert main([*common, "run", "--rounds", "1"]) == 0
+
+    state = json.loads((project / "state.json").read_text())
+    assert state["state"] == "completed" and state["progress_percent"] == 100
+    assert state["rounds_total"] == 2 and state["accepted_rounds"] + state["rejected_rounds"] == 2
+    assert sorted(p.name for p in (project / "rounds").iterdir()) == [
+        "round01.json",
+        "round01.tflite",
+        "round02.json",
+        "round02.tflite",
+    ]
+    for name in ("own", "own_hard", "own_negative", "speech_extra"):
+        assert (project / "features" / name / "training").is_dir(), name
 
     report = json.loads((project / "report.json").read_text())
     print(json.dumps({k: v for k, v in report.items() if k != "curve"}, indent=2))
     assert report["positive_source"] == "own" and report["positives"] > 5
+    assert report["own_negatives"] > 0 and report["own_negatives_triggered"] is not None
     assert report["ambient_hours"] == pytest.approx(4 * 90 / 3600, rel=0.05)
     manifest = json.loads((project / "export" / "hey_nova.json").read_text())
     assert (project / "export" / "hey_nova.tflite").stat().st_size > 10_000
     assert manifest["micro"]["probability_cutoff"] == report["probability_cutoff"]
     # A distinct rising tone against noise is easy: even a short training must find it.
     assert report["recall"] >= 0.5
+
+    # Compare the exported model (with its manifest) and the first round's model.
+    assert main([*common, "compare", "--current", "--model", str(project / "rounds" / "round01.tflite")]) == 0
+    rows = json.loads((project / "compare.json").read_text())
+    assert len(rows) == 2 and "own_cutoff" in rows[0] and "own_cutoff" not in rows[1]
+    assert rows[0]["own_cutoff"]["probability_cutoff"] == pytest.approx(report["probability_cutoff"], abs=0.004)
+
+    # A second run from scratch must not trip over the existing model folder. 50 steps
+    # learn nothing, so this run must refuse to export and keep the previous model.
+    exported = (project / "export" / "hey_nova.tflite").read_bytes()
+    assert main([*common, "run", "--rounds", "0", "--steps", "50"]) == 2
+    assert sorted(p.name for p in (project / "rounds").iterdir()) == ["round01.json", "round01.tflite"]
+    state = json.loads((project / "state.json").read_text())
+    assert state["state"] == "failed" and "recognizes none" in state["last_error"]
+    assert (project / "export" / "hey_nova.tflite").read_bytes() == exported

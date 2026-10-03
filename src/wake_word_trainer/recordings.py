@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -24,7 +24,6 @@ from . import audio
 from .project import Project, ProjectError
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-SPLITS = ("train", "eval")
 
 
 @dataclass
@@ -34,12 +33,19 @@ class FetchResult:
     kept: int = 0
     train: int = 0
     eval: int = 0
+    hard: int = 0
+    negative: int = 0
 
     def __str__(self) -> str:
-        return (
+        text = (
             f"{self.added} new, {self.removed} removed, {self.kept} unchanged; "
             f"{self.train} for training, {self.eval} held out for evaluation"
         )
+        if self.hard:
+            text += f"; {self.hard} difficult"
+        if self.negative:
+            text += f"; {self.negative} without the wake word"
+        return text
 
 
 def split_for(digest: str, eval_share: float) -> str:
@@ -70,15 +76,29 @@ def read_token(project: Project) -> str:
     return token
 
 
-def collector_clips(base_url: str, token: str, slug: str) -> list[tuple[str, str, bytes]]:
-    """(device, filename, wav bytes) of every usable clip in the collector export."""
+def _listing(base: str, token: str, path: str, key: str, optional: bool = False) -> list[dict]:
+    try:
+        with _get(base + path, token) as response:
+            return list(json.load(response).get(key, []))
+    except urllib.error.HTTPError as err:
+        if optional and err.code == 404:
+            return []  # older collector without this export
+        raise
+
+
+def collector_clips(base_url: str, token: str, slug: str, kind: str = "positive") -> list[tuple[str, str, bytes]]:
+    """(device, filename, wav bytes) from the collector export: the accepted clips
+    (kind positive) or the clips marked as not the wake word (kind negative)."""
     base = base_url.rstrip("/")
     if urllib.parse.urlsplit(base).scheme not in {"http", "https"}:
         raise ProjectError("collector.url must start with http:// or https://")
-    with _get(f"{base}/api/wake_word_collector/export/{urllib.parse.quote(slug)}", token) as response:
-        listing = json.load(response)
+    quoted = urllib.parse.quote(slug)
+    if kind == "negative":
+        items = _listing(base, token, f"/api/wake_word_collector/export/{quoted}/negatives", "negatives", True)
+    else:
+        items = _listing(base, token, f"/api/wake_word_collector/export/{quoted}", "candidates")
     clips = []
-    for item in listing.get("candidates", []):
+    for item in items:
         device, filename = str(item.get("device", "")), str(item.get("filename", ""))
         if not SAFE_NAME.match(device) or not SAFE_NAME.match(filename) or not filename.endswith(".wav"):
             continue
@@ -87,9 +107,9 @@ def collector_clips(base_url: str, token: str, slug: str) -> list[tuple[str, str
     return clips
 
 
-def local_clips(project: Project) -> list[tuple[str, str, bytes]]:
+def local_clips(project: Project, setting: str = "folders") -> list[tuple[str, str, bytes]]:
     clips = []
-    for folder in project.config["recordings"]["folders"]:
+    for folder in project.config["recordings"][setting]:
         root = project.resolve(folder)
         if not root.is_dir():
             raise ProjectError(f"Recording folder missing: {root}")
@@ -100,22 +120,36 @@ def local_clips(project: Project) -> list[tuple[str, str, bytes]]:
 
 
 def fetch(project: Project) -> FetchResult:
-    """Bring recordings/ in line with the sources; returns what changed."""
-    clips: list[tuple[str, str, bytes]] = []
+    """Bring recordings/ in line with the sources; returns what changed.
+
+    recordings/train|eval/<device>/           the wake word
+    recordings/hard/<device>/                 difficult examples, training only
+    recordings/negative/train|eval/<device>/  no wake word
+    """
     collector = project.config["collector"]
+    positives, negatives = [], []
     if collector["url"]:
-        clips += collector_clips(collector["url"], read_token(project), project.slug)
-    clips += local_clips(project)
-    if not clips:
+        token = read_token(project)
+        positives += collector_clips(collector["url"], token, project.slug)
+        negatives += collector_clips(collector["url"], token, project.slug, "negative")
+    positives += local_clips(project)
+    hard = local_clips(project, "hard_folders")
+    negatives += local_clips(project, "negative_folders")
+    if not (positives or hard):
         raise ProjectError("No recordings: set collector.url/token_file or recordings.folders")
 
     share = float(project.config["recordings"]["eval_share"])
+    root = project.recordings
     wanted: dict[Path, bytes] = {}
-    for device, filename, data in clips:
-        wanted[project.recordings / split_for(_sha256(data), share) / device / filename] = data
+    for device, filename, data in positives:
+        wanted[root / split_for(_sha256(data), share) / device / filename] = data
+    for device, filename, data in hard:
+        wanted[root / "hard" / device / filename] = data
+    for device, filename, data in negatives:
+        wanted[root / "negative" / split_for(_sha256(data), share) / device / filename] = data
 
     result = FetchResult()
-    for path in audio.wavs(*(project.recordings / split for split in SPLITS)):
+    for path in audio.wavs(root):
         if path not in wanted:
             path.unlink()
             result.removed += 1
@@ -126,10 +160,11 @@ def fetch(project: Project) -> FetchResult:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         result.added += 1
-    for split in SPLITS:
-        for folder in (project.recordings / split).glob("*"):
-            if folder.is_dir() and not any(folder.iterdir()):
-                shutil.rmtree(folder)
-    result.train = len(audio.wavs(project.recordings / "train"))
-    result.eval = len(audio.wavs(project.recordings / "eval"))
+    for folder in sorted(root.rglob("*"), reverse=True):
+        if folder.is_dir() and not any(folder.iterdir()):
+            folder.rmdir()
+    result.train = len(audio.wavs(root / "train"))
+    result.eval = len(audio.wavs(root / "eval"))
+    result.hard = len(audio.wavs(root / "hard"))
+    result.negative = len(audio.wavs(root / "negative"))
     return result

@@ -31,8 +31,13 @@ through [piper-sample-generator](https://github.com/rhasspy/piper-sample-generat
 | `train` | microWakeWord MixedNet, streaming, int8 quantized, the architecture of the official ESPHome models. Resumes after an interruption. |
 | `evaluate` | Runs the finished model exactly like the satellite: recall on your held-out recordings, false activations per hour on hours of background audio, for all 256 possible cutoffs. Picks the most sensitive cutoff within your false activation budget and lists the recordings it misses. |
 | `export` | `<slug>.tflite` and the manifest `<slug>.json` for ESPHome. |
+| `mine` | Runs the trained model over the negative *training* data and keeps what it wrongly reacts to; the next training learns from it. |
+| `compare` | Several models (e.g. the one on your satellites and a new one) on exactly the same held-out data, each at its own cutoff and at the cutoff your budget allows. |
+| `serve` | HTTP service for Home Assistant: start, stop and follow trainings, fetch the model, play test recordings to a satellite. |
 
-`run` does `fetch`, `generate`, `features`, `train`, `evaluate`, `export` in a row.
+`run` does it all: `fetch`, `generate`, `features`, then training rounds
+(round 1 from scratch, each further round mines first and continues), each
+round evaluated on the same held-out data, and exports the best round.
 
 ## Requirements
 
@@ -51,10 +56,27 @@ pip install "wake-word-trainer[train,tts] @ git+https://github.com/ChristophBell
 `train` brings TensorFlow and microWakeWord, `tts` brings PyTorch and Piper.
 Without `tts` you can still train from your own recordings.
 
-microWakeWord is pinned to a fixed upstream version. It comes from the branch
-[`packaging-fix`](https://github.com/ChristophBellmann/micro-wake-word/tree/packaging-fix),
-which only adds the `__init__.py` files that a normal install of upstream
-misses (`microwakeword.audio`, `microwakeword.layers`).
+microWakeWord is pinned to a fixed upstream version, installed from the branch
+[`trainer-compat`](https://github.com/ChristophBellmann/micro-wake-word/tree/trainer-compat)
+which adds only small fixes: the `__init__.py` files a normal install of
+upstream misses, NumPy 1.26 compatibility, and two TensorFlow 2.20/ROCm export
+fixes.
+
+### AMD GPUs (ROCm)
+
+ROCm builds of TensorFlow come as their own wheels (often with `numpy<2`).
+Install them first, then the trainer **without letting pip replace them**:
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install /path/to/tensorflow_rocm*.whl            # your ROCm TensorFlow
+python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+pip freeze | grep -iE "^(tensorflow|numpy|protobuf)" > keep.txt
+pip install -c keep.txt "wake-word-trainer[train,tts] @ git+https://github.com/ChristophBellmann/wake-word-trainer"
+```
+
+The constraints file keeps TensorFlow, NumPy and protobuf as they are; pip
+fails instead of breaking the GPU stack if something does not fit.
 
 ## Quick start with the Wake Word Collector
 
@@ -121,7 +143,13 @@ collector:
   token_file: ""              # file with the collector token
 recordings:
   folders: []                 # more WAV folders with the wake word
+  hard_folders: []            # difficult but correct examples, extra weight, training only
+  negative_folders: []        # own recordings WITHOUT the wake word (real false activations)
   eval_share: 0.2             # share held out for the evaluation
+negatives:
+  speech_folders: []          # more speech the model must ignore (16 kHz WAVs)
+  speech_presets: []          # downloaded with `download --speech`, e.g. [mls_de]
+  speech_clips: 6000          # at most this many, evenly picked
 tts:
   voices: []                  # Piper .onnx files (with .onnx.json beside them)
   phrases: []                 # what is synthesized; phonetic spellings help
@@ -137,18 +165,23 @@ augmentation:
   background_folders: []      # e.g. recordings of your own living room
   rir_folders: []
 training:
-  steps: 20000
+  steps: 20000                # per round
   batch_size: 128
   learning_rate: 0.001
   positive_class_weight: 1.0
   negative_class_weight: 20.0
   own_repeat: 8               # augmented copies of each own recording
-  weights: {own: 3.0, tts: 2.0, tts_negative: 3.0, speech: 10.0, dinner_party: 10.0, no_speech: 5.0}
+  weights: {own: 3.0, own_hard: 1.5, own_negative: 4.0, speech_extra: 5.0, mined: 4.0,
+            tts: 2.0, tts_negative: 3.0, speech: 10.0, dinner_party: 10.0, no_speech: 5.0}
   clip_duration_ms: 1500
   eval_step_interval: 500
+  mining_rounds: 0            # extra rounds: mine false activations, train again
+  mining_samples: 20000       # negative spectrograms checked per round
+  mining_threshold: 0.4
 evaluation:
   max_false_accepts_per_hour: 0.5
   min_probability_cutoff: 0.5
+  max_own_negative_share: 0.05  # of your held-out non-wake-word recordings
   sliding_window_size: 5
 export:
   author: ""
@@ -158,6 +191,44 @@ export:
 ```
 
 `--downloads <folder>` shares the downloads between several projects.
+
+## More data, fewer false activations
+
+- **Your own negatives** (`recordings.negative_folders`, or clips marked
+  *not the wake word* in the collector) are the strongest lever against false
+  activations at home: TV, conversations, words that sound alike. A held-out
+  share also limits the cutoff (`max_own_negative_share`) and the report
+  lists the ones that still trigger.
+- **Speech in your language**: the microWakeWord negative sets are mostly
+  English. `download --speech mls_de` fetches German audio books
+  (Multilingual LibriSpeech; also `mls_fr`, `mls_nl`, `mls_es`, `mls_it`,
+  `mls_pt`, `mls_pl`); add the preset to `negatives.speech_presets`.
+- **Mining rounds** (`training.mining_rounds: 2` or `run --rounds 2`) let the
+  model find its own weak spots in the negative training data.
+
+## Home Assistant
+
+`wake-word-trainer serve` runs on the training computer and lets Home
+Assistant (the [Wake Word Collector](https://github.com/ChristophBellmann/ha-wake-word-collector)
+integration) start and stop trainings, show progress and results, take over
+the finished model and run a loudspeaker test against a satellite. Copy
+[`deploy/service.example.yaml`](deploy/service.example.yaml) and
+[`deploy/wake-word-trainer.service`](deploy/wake-word-trainer.service),
+create a token (`openssl rand -hex 24`), then in the collector's options
+enter `http://<training computer>:10701` and the token.
+
+## Replacing a model you already use
+
+Measure before you switch:
+
+```bash
+wake-word-trainer -p hey_jarvis compare --current --model /path/to/old_model.tflite
+```
+
+With the old manifest (`old_model.json`) beside the `.tflite`, both models are
+measured on your held-out recordings at their own cutoffs and at the cutoff
+your budget allows. Switch only when the new one recognizes at least as much
+with no more false activations.
 
 ## Good to know
 

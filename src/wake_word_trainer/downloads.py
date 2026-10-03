@@ -32,6 +32,22 @@ AUDIOSET = ("agkphysics/AudioSet", "data/bal_train09.tar")
 FMA = ("mchl914/fma_xsmall", "fma_xs.zip")
 VOICES_REPO = "rhasspy/piper-voices"
 
+# Speech the model must ignore, in other languages than the microWakeWord sets
+# (mostly English). Multilingual LibriSpeech: read audio books, CC BY 4.0.
+# A preset is a dataset repository plus words that select its Parquet files.
+SPEECH_PRESETS = {
+    f"mls_{code}": ("facebook/multilingual_librispeech", (language, "train"))
+    for code, language in {
+        "de": "german",
+        "fr": "french",
+        "nl": "dutch",
+        "es": "spanish",
+        "it": "italian",
+        "pt": "portuguese",
+        "pl": "polish",
+    }.items()
+}
+
 Log = Callable[[str], None]
 
 
@@ -46,6 +62,21 @@ def _fetch(url: str, target: Path, log: Log) -> Path:
         shutil.copyfileobj(response, out, length=1 << 20)
     part.rename(target)
     return target
+
+
+def _tree(repo: str, folder: str = "", base: str = HF) -> list[str]:
+    """All file paths of a dataset repository (below folder), following pagination."""
+    url = f"{base}/api/datasets/{repo}/tree/main/{urllib.parse.quote(folder)}".rstrip("/") + "?recursive=true"
+    paths: list[str] = []
+    while url:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            paths += [item["path"] for item in json.load(response) if item.get("type", "file") == "file"]
+            link = response.headers.get("Link", "")
+        url = ""
+        for part in link.split(","):
+            if 'rel="next"' in part:
+                url = part.split(";")[0].strip().strip("<>")
+    return paths
 
 
 def _dataset_file(repo: str, path: str, base: str = HF) -> str:
@@ -79,9 +110,7 @@ def room_impulses(downloads: Path, log: Log = print, base: str = HF) -> Path:
     target = downloads / "rirs"
     if _done(target):
         return target
-    listing_url = f"{base}/api/datasets/{RIR_REPO}/tree/main/{RIR_FOLDER}"
-    with urllib.request.urlopen(listing_url, timeout=60) as response:
-        files = [item["path"] for item in json.load(response) if item.get("path", "").endswith(".wav")]
+    files = [path for path in _tree(RIR_REPO, RIR_FOLDER, base) if path.endswith(".wav")]
     for path in files:
         _fetch(_dataset_file(RIR_REPO, path, base), target / Path(path).name, log)
     _mark_done(target)
@@ -108,6 +137,65 @@ def background(downloads: Path, log: Log = print, base: str = HF) -> Path:
         shutil.rmtree(raw)
         archive.unlink()
     return target
+
+
+def speech(preset: str, downloads: Path, clips: int, log: Log = print, base: str = HF) -> Path:
+    """Up to `clips` utterances of a speech preset as 16 kHz WAVs in downloads/speech/<preset>."""
+    if preset not in SPEECH_PRESETS:
+        raise ValueError(f"Unknown speech preset {preset!r}; known: {', '.join(sorted(SPEECH_PRESETS))}")
+    repo, words = SPEECH_PRESETS[preset]
+    target = downloads / "speech" / preset
+    if _done(target) or len(audio.wavs(target)) >= clips:
+        return target
+    files = sorted(
+        path for path in _tree(repo, "", base) if path.endswith(".parquet") and all(word in path for word in words)
+    )
+    if not files:
+        raise ValueError(f"No Parquet files for {preset} in {repo}")
+    count = len(audio.wavs(target))
+    for path in files:
+        if count >= clips:
+            break
+        archive = _fetch(_dataset_file(repo, path, base), downloads / "archives" / repo.replace("/", "_") / path, log)
+        count = _parquet_to_wav(archive, target, count, clips)
+        archive.unlink()
+    _mark_done(target)
+    return target
+
+
+def _parquet_to_wav(path: Path, target: Path, count: int, limit: int) -> int:
+    import io
+
+    import pyarrow.parquet as pq  # comes with the train extra (datasets)
+    import soundfile
+
+    target.mkdir(parents=True, exist_ok=True)
+    table = pq.read_table(str(path), columns=["audio"])
+    for cell in table.column("audio").to_pylist():
+        if count >= limit:
+            break
+        data = cell.get("bytes") if isinstance(cell, dict) else None
+        if not data:
+            continue
+        try:
+            samples, rate = soundfile.read(io.BytesIO(data), dtype="float32", always_2d=True)
+        except Exception:  # a broken file in a large set is skipped
+            continue
+        mono = samples.mean(axis=1)
+        audio.write(target / f"{count:06d}.wav", _resample(mono, rate))
+        count += 1
+    return count
+
+
+def _resample(samples: np.ndarray, rate: int) -> np.ndarray:
+    if rate == audio.RATE:
+        return np.asarray(samples, dtype=np.float32)
+    from math import gcd
+
+    from scipy.signal import resample_poly
+
+    divisor = gcd(int(rate), audio.RATE)
+    return resample_poly(samples, audio.RATE // divisor, int(rate) // divisor).astype(np.float32)
 
 
 def voice(name: str, folder: Path, log: Log = print, base: str = HF) -> Path:
@@ -143,12 +231,4 @@ def _convert_to_wav(source: Path, target: Path, log: Log) -> None:
             data, rate = soundfile.read(str(path), dtype="float32", always_2d=True)
         except Exception:  # a broken file in a large set is skipped
             continue
-        mono = data.mean(axis=1)
-        if rate != audio.RATE:
-            from math import gcd
-
-            from scipy.signal import resample_poly
-
-            divisor = gcd(int(rate), audio.RATE)
-            mono = resample_poly(mono, audio.RATE // divisor, int(rate) // divisor)
-        audio.write(target / f"{path.stem}.wav", np.asarray(mono, dtype=np.float32))
+        audio.write(target / f"{path.stem}.wav", _resample(data.mean(axis=1), rate))

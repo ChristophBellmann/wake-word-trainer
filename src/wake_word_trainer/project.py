@@ -33,7 +33,17 @@ DEFAULTS: dict[str, Any] = {
     "language": "en",
     # Own recordings: the Wake Word Collector export and/or local folders of 16 kHz WAVs.
     "collector": {"url": "", "token_file": ""},
-    "recordings": {"folders": [], "eval_share": 0.2},
+    "recordings": {
+        "folders": [],
+        # Difficult but correct examples (far away, fast, unusual): trained with extra weight.
+        "hard_folders": [],
+        # Your own recordings WITHOUT the wake word, ideally real false activations.
+        "negative_folders": [],
+        "eval_share": 0.2,
+    },
+    # More speech the model must ignore, e.g. in your language (16 kHz WAV folders or
+    # downloaded presets, see `download --speech`).
+    "negatives": {"speech_folders": [], "speech_presets": [], "speech_clips": 6000},
     "tts": {
         # Piper voices (.onnx with .onnx.json beside it), relative to the project or absolute.
         "voices": [],
@@ -65,6 +75,10 @@ DEFAULTS: dict[str, Any] = {
         # Sampling weights in the training batches.
         "weights": {
             "own": 3.0,
+            "own_hard": 1.5,
+            "own_negative": 4.0,
+            "speech_extra": 5.0,
+            "mined": 4.0,
             "tts": 2.0,
             "tts_negative": 3.0,
             "speech": 10.0,
@@ -72,6 +86,10 @@ DEFAULTS: dict[str, Any] = {
             "no_speech": 5.0,
         },
         "clip_duration_ms": 1500,
+        # Rounds of: train, find false activations in the background audio, train again with them.
+        "mining_rounds": 0,
+        "mining_samples": 20000,  # negative spectrograms checked per round
+        "mining_threshold": 0.4,  # averaged score above which a negative counts as found
         "eval_step_interval": 500,
     },
     "evaluation": {
@@ -79,6 +97,8 @@ DEFAULTS: dict[str, Any] = {
         "max_false_accepts_per_hour": 0.5,
         # Never more sensitive than this: the background set is only a sample of real life.
         "min_probability_cutoff": 0.5,
+        # Share of your own held-out non-wake-word recordings that may still trigger.
+        "max_own_negative_share": 0.05,
         "sliding_window_size": 5,
     },
     "export": {

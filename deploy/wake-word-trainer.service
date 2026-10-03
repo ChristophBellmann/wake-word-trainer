@@ -1,0 +1,19 @@
+# systemd user service: ~/.config/systemd/user/wake-word-trainer.service
+#   systemctl --user daemon-reload && systemctl --user enable --now wake-word-trainer
+#   loginctl enable-linger $USER   # keep it running without a login session
+[Unit]
+Description=Wake Word Trainer service for Home Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The virtual environment with wake-word-trainer[train,tts] installed:
+ExecStart=%h/wake-word-trainer/.venv/bin/wake-word-trainer serve --config %h/.config/wake-word-trainer/service.yaml
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

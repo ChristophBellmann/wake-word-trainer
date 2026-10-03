@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=2.0",
+    "numpy>=1.26",
     "pyyaml",
     "scipy",
 ]
@@ -18,9 +18,10 @@ dependencies = [
 [project.optional-dependencies]
 # Feature generation, training and evaluation (TensorFlow, ~3 GB).
 train = [
-    # Upstream microWakeWord 4665173 plus __init__.py for microwakeword.audio and
-    # .layers, without which a normal (non-editable) install leaves them out.
-    "microwakeword @ git+https://github.com/ChristophBellmann/micro-wake-word@7ce804c78a2f9af1acd9cb58294bacfe7131dc96",
+    # Upstream microWakeWord 4665173 plus: __init__.py for microwakeword.audio and
+    # .layers (a normal install leaves them out), NumPy 1.26 compatibility and two
+    # ROCm/TensorFlow 2.20 export fixes. Branch trainer-compat of the fork.
+    "microwakeword @ git+https://github.com/ChristophBellmann/micro-wake-word@664a767db4474cd149d2d54038ab9144808951ef",
     # Used by microWakeWord's training loop but not declared there.
     "tensorboard",
 ]

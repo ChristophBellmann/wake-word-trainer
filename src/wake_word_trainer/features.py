@@ -24,7 +24,8 @@ AUGMENTED_SECONDS = 3.2
 Log = Callable[[str], None]
 
 
-def augmenter(project: Project, downloads: Path):
+def augmenter(project: Project, downloads: Path, truncate_randomly: bool = False):
+    """truncate_randomly: long negatives contribute a random window instead of their end."""
     from microwakeword.audio.augmentation import Augmentation
 
     settings = project.config["augmentation"]
@@ -52,6 +53,7 @@ def augmenter(project: Project, downloads: Path):
         max_gain_db=0,
         min_jitter_s=0.195,
         max_jitter_s=0.205,
+        truncate_randomly=truncate_randomly,
     )
 
 
@@ -98,30 +100,58 @@ def _holdout(clips: list[Path], share: float = 0.1) -> tuple[list[Path], list[Pa
     return clips[2 * held :], clips[:held], clips[held : 2 * held]
 
 
+def speech_clips(project: Project, downloads: Path) -> list[Path]:
+    """Extra negative speech: own folders plus downloaded presets, evenly thinned to
+    negatives.speech_clips so a huge folder does not dominate."""
+    settings = project.config["negatives"]
+    folders = [project.resolve(folder) for folder in settings["speech_folders"]]
+    folders += [downloads / "speech" / preset for preset in settings["speech_presets"]]
+    for folder in folders:
+        if not folder.is_dir():
+            raise ProjectError(f"Speech folder missing: {folder} (download --speech for presets)")
+    clips = audio.wavs(*folders)
+    limit = int(settings["speech_clips"])
+    if len(clips) > limit > 0:
+        clips = [clips[int(index * len(clips) / limit)] for index in range(limit)]
+    return clips
+
+
 def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]:
-    own_train = audio.wavs(project.recordings / "train")
-    own_eval = audio.wavs(project.recordings / "eval")
+    recordings = project.recordings
+    own_train = audio.wavs(recordings / "train")
+    own_eval = audio.wavs(recordings / "eval")
+    own_hard = audio.wavs(recordings / "hard")
+    negative_train = audio.wavs(recordings / "negative" / "train")
+    negative_eval = audio.wavs(recordings / "negative" / "eval")
     tts_pos = audio.wavs(project.path("tts", "positive"))
     tts_neg = audio.wavs(project.path("tts", "negative"))
-    if not (own_train or tts_pos):
+    if not (own_train or own_hard or tts_pos):
         raise ProjectError("Nothing to train on: run fetch and/or generate first")
 
-    augment = augmenter(project, downloads)
+    augments = {False: augmenter(project, downloads), True: augmenter(project, downloads, truncate_randomly=True)}
     repeat = int(project.config["training"]["own_repeat"])
     root = project.features
     counts: dict[str, int] = {}
 
-    def make(name: str, split: str, clips: list[Path], times: int, slide: int) -> None:
+    def make(name: str, split: str, clips: list[Path], times: int, slide: int, random_window: bool = False) -> None:
         if not clips:
             return
         log(f"Features {name}/{split}: {len(clips)} clips x {times}")
         counts[f"{name}/{split}"] = write_mmap(
-            root / name / split / f"{name}_mmap", spectrograms(clips, augment, times, slide)
+            root / name / split / f"{name}_mmap", spectrograms(clips, augments[random_window], times, slide)
         )
 
+    # Mined false activations (features/mined) belong to earlier rounds and stay.
     if root.exists():
-        shutil.rmtree(root)
+        for child in root.iterdir():
+            if child.name != "mined":
+                shutil.rmtree(child)
     make("own", "training", own_train, repeat, 10)
+    make("own_hard", "training", own_hard, repeat, 10)
+    make("own_negative", "training", negative_train, max(1, repeat // 2), 1, random_window=True)
+    make("own_negative", "validation", negative_eval, 1, 1, random_window=True)
+    make("own_negative", "testing", negative_eval, 1, 1, random_window=True)
+    make("speech_extra", "training", speech_clips(project, downloads), 1, 1, random_window=True)
     if own_eval:
         make("own", "validation", own_eval, 1, 10)
         make("own", "testing", own_eval, 1, 1)
@@ -131,5 +161,5 @@ def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]
         make("tts", "training", train, 2, 10)
         make("tts", "validation", validation, 1, 10)
         make("tts", "testing", test, 1, 1)
-    make("tts_negative", "training", tts_neg, 1, 10)
+    make("tts_negative", "training", tts_neg, 1, 1)
     return counts
