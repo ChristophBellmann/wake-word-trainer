@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wake-word-trainer"
+version = "0.1.0"
+description = "Train a microWakeWord model for ESPHome from your own recordings (Wake Word Collector) plus synthetic speech"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.0",
+    "pyyaml",
+    "scipy",
+]
+
+[project.optional-dependencies]
+# Feature generation, training and evaluation (TensorFlow, ~3 GB).
+train = [
+    "microwakeword @ git+https://github.com/kahrendt/microWakeWord@4665173cd35f1cff9a61e06fc427f124766c488e",
+    # Used by microWakeWord's training loop but not declared there.
+    "tensorboard",
+]
+# Synthetic speech with Piper voices (PyTorch).
+tts = [
+    "piper-sample-generator>=3.2",
+]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+wake-word-trainer = "wake_word_trainer.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ChristophBellmann/wake-word-trainer"
+Issues = "https://github.com/ChristophBellmann/wake-word-trainer/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: needs the train extra (TensorFlow); trains a tiny model"]

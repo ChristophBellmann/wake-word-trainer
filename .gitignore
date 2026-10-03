@@ -1,0 +1,8 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+# Projects hold voice recordings and large downloads: never commit them.
+projects/
+downloads/
