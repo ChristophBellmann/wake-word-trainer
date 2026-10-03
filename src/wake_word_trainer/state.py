@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-import time
+from datetime import datetime, timezone
 from typing import Any
 
 from .project import Project
@@ -15,7 +15,7 @@ FINISH_SHARE = 5.0
 
 
 def now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class State:
