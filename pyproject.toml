@@ -18,7 +18,9 @@ dependencies = [
 [project.optional-dependencies]
 # Feature generation, training and evaluation (TensorFlow, ~3 GB).
 train = [
-    "microwakeword @ git+https://github.com/kahrendt/microWakeWord@4665173cd35f1cff9a61e06fc427f124766c488e",
+    # Upstream microWakeWord 4665173 plus __init__.py for microwakeword.audio and
+    # .layers, without which a normal (non-editable) install leaves them out.
+    "microwakeword @ git+https://github.com/ChristophBellmann/micro-wake-word@7ce804c78a2f9af1acd9cb58294bacfe7131dc96",
     # Used by microWakeWord's training loop but not declared there.
     "tensorboard",
 ]

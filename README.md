@@ -51,6 +51,11 @@ pip install "wake-word-trainer[train,tts] @ git+https://github.com/ChristophBell
 `train` brings TensorFlow and microWakeWord, `tts` brings PyTorch and Piper.
 Without `tts` you can still train from your own recordings.
 
+microWakeWord is pinned to a fixed upstream version. It comes from the branch
+[`packaging-fix`](https://github.com/ChristophBellmann/micro-wake-word/tree/packaging-fix),
+which only adds the `__init__.py` files that a normal install of upstream
+misses (`microwakeword.audio`, `microwakeword.layers`).
+
 ## Quick start with the Wake Word Collector
 
 1. In Home Assistant, *Wake Word Collector → Configure* shows the token. Save it:
