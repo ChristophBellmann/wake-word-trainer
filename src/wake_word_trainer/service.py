@@ -51,6 +51,7 @@ import yaml
 
 from . import audio
 from .project import Project
+from .resources import Resources
 from .state import State, now, read
 
 DEFAULT_PROFILES = {
@@ -75,6 +76,9 @@ class Service:
         self.process: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.speaker_lock = threading.Lock()
+        self.resources = Resources(self.project.root, config.get("pause_services") or [])
+        self.resources.release()
+        self.watcher: threading.Thread | None = None
         state = read(self.project)
         if state.get("state") in ("running", "starting"):
             State(self.project).update(state="failed", ended_at=now(), last_error="Interrupted: the service restarted")
@@ -103,14 +107,36 @@ class Service:
                 command += ["--steps", str(int(profile["steps"]))]
             State(self.project).update(state="starting", profile=profile_id, started_at=now(), message="")
             log = self.project.path("service.log").open("a", encoding="utf-8")
-            self.process = subprocess.Popen(
-                command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=self.project.root
-            )
+            try:
+                self.resources.release()
+                self.resources.acquire()
+                self.process = subprocess.Popen(
+                    command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=self.project.root
+                )
+            except Exception as err:
+                self.resources.release()
+                State(self.project).update(state="failed", ended_at=now(), last_error=str(err))
+                return 503, {"error": "could not prepare training resources"}
+            finally:
+                log.close()
+            self.watcher = threading.Thread(target=self._finished, args=(self.process,), daemon=True)
+            self.watcher.start()
         return 202, {"started": profile_id}
+
+    def _finished(self, process: subprocess.Popen) -> None:
+        process.wait()
+        with self.lock:
+            if self.process is not process:
+                return
+            try:
+                self.resources.release()
+            except Exception as err:
+                State(self.project).update(state="failed", ended_at=now(), last_error=f"Resource restore failed: {err}")
 
     def stop(self) -> tuple[int, dict]:
         with self.lock:
             if not self.running():
+                self.resources.release()
                 return 200, {"stopped": False}
             assert self.process is not None
             os.killpg(self.process.pid, signal.SIGINT)
@@ -119,6 +145,7 @@ class Service:
             except subprocess.TimeoutExpired:
                 os.killpg(self.process.pid, signal.SIGTERM)
                 self.process.wait(timeout=10)
+            self.resources.release()
         state = read(self.project)
         if state.get("state") in ("running", "starting"):
             State(self.project).update(state="stopped", ended_at=now(), message="Stopped")
@@ -269,9 +296,17 @@ def make_server(config: dict[str, Any]) -> tuple[ThreadingHTTPServer, Service]:
 
 def serve(config_path: Path) -> None:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    server, _ = make_server(config)
+    server, service = make_server(config)
+
+    def terminate(_signal, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, terminate)
     print(f"Serving on {server.server_address[0]}:{server.server_address[1]}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        service.stop()
+        server.server_close()

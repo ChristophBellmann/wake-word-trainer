@@ -4,6 +4,8 @@ downloads: ~/wakeword/downloads             # optional: shared downloads
 token_file: ~/.config/wake-word-trainer/service.token   # >= 16 characters
 bind: 0.0.0.0
 port: 10701
+# Optional: free VRAM during runs; restart only services that were active before.
+# pause_services: [llama-server.service, orpheus-llm.service, wyoming-orpheus.service]
 profiles:                                   # what Home Assistant can start
   quick: {label: Quick, rounds: 0, steps: 10000}
   recommended: {label: Recommended, rounds: 2}

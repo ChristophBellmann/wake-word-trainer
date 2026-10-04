@@ -226,6 +226,26 @@ the finished model and run a loudspeaker test against a satellite. Copy
 create a token (`openssl rand -hex 24`), then in the collector's options
 enter `http://<training computer>:10701` and the token.
 
+### VRAM mit anderen Diensten teilen
+
+Wenn auf dem Trainingsrechner auch ein LLM oder GPU-TTS läuft, können die
+systemd-Benutzerdienste in `service.yaml` eingetragen werden:
+
+```yaml
+pause_services:
+  - llama-server.service
+  - orpheus-llm.service
+  - wyoming-orpheus.service
+```
+
+Vor einem Lauf hält der Trainer die zuvor aktiven Dienste an. Nach Abschluss,
+Fehler, „Training stoppen“ oder regulärem Beenden des Trainer-Dienstes startet
+er genau diese Dienste wieder. Zuvor inaktive Dienste bleiben inaktiv. Ein
+unterbrochener Vorgang wird beim nächsten Trainer-Start wiederhergestellt;
+der Zustand liegt lokal im Projekt unter `paused_services.json`. Die Namen
+sind Beispiele; ohne diese Einstellung wird kein anderer Dienst verwaltet.
+Dies gilt für `serve`; direkte CLI-Läufe verwalten keine fremden Dienste.
+
 ## Replacing a model you already use
 
 Measure before you switch:
