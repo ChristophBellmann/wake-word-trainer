@@ -16,10 +16,7 @@ def generate(text: str, models: list[str], count: int, target: Path, scales: lis
 
     voices = [PiperVoice.load(model, use_cuda=False) for model in models]
     settings = [
-        (voice, speaker, scale)
-        for voice in voices
-        for speaker in range(voice.config.num_speakers)
-        for scale in scales
+        (voice, speaker, scale) for voice in voices for speaker in range(voice.config.num_speakers) for scale in scales
     ]
     target.mkdir(parents=True, exist_ok=True)
     for index, (voice, speaker, scale) in enumerate(itertools.islice(itertools.cycle(settings), count)):
@@ -29,9 +26,7 @@ def generate(text: str, models: list[str], count: int, target: Path, scales: lis
         # Interrupted synthesis must not leave a WAV that the next run counts as complete.
         part = path.with_suffix(".wav.part")
         with wave.open(str(part), "wb") as output:
-            voice.synthesize_wav(
-                text, output, syn_config=SynthesisConfig(speaker_id=speaker, length_scale=scale)
-            )
+            voice.synthesize_wav(text, output, syn_config=SynthesisConfig(speaker_id=speaker, length_scale=scale))
         part.replace(path)
 
 
