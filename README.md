@@ -326,6 +326,11 @@ an Fehlauslösungen pro Stunde gewählt. Am Ende liegen `.tflite` und das
 ESPHome-Manifest unter `export/`. Nicht erkannte Aufnahmen werden aufgelistet:
 anhören und, wenn falsch, im Collector verwerfen.
 
+Schwierige Beispiele dürfen den Bewertungsbestand nicht ins Training
+zurückbringen: Liegt derselbe WAV-Inhalt auch unter `recordings.hard_folders`,
+bleibt eine bereits zur Bewertung zugeordnete Aufnahme ausschließlich dort.
+`fetch` entfernt frühere doppelte Trainingskopien; Quelldateien bleiben erhalten.
+
 ## Automatic wake-word clips from long recordings
 
 Install the optional `segment` extra (`pip install ".[segment]"`, using your

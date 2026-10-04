@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import subprocess
@@ -67,6 +68,38 @@ def test_older_collector_without_negative_export(tmp_path, server):
         tmp_path / "p", "Hey Nova", collector={"url": fake.url, "token_file": str(tmp_path / "token")}
     )
     assert recordings.fetch(project).negative == 0
+
+
+def test_held_out_recording_cannot_reenter_training_as_difficult_example(tmp_path):
+    held = None
+    for seed in range(100):
+        body = write_wav(tmp_path / "positive" / f"{seed}.wav", chirp(seed=seed))
+        if recordings.split_for(hashlib.sha256(body).hexdigest(), 0.2) == "eval":
+            held = body
+            break
+    assert held is not None
+    (tmp_path / "hard").mkdir()
+    (tmp_path / "hard" / "different_name.wav").write_bytes(held)
+    write_wav(tmp_path / "hard" / "new_difficult.wav", chirp(seed=500))
+    project = Project.create(
+        tmp_path / "p",
+        "Hey Nova",
+        recordings={"folders": [str(tmp_path / "positive")], "hard_folders": [str(tmp_path / "hard")]},
+    )
+    # Re-fetch must remove an already imported leaking copy as well.
+    stale = project.recordings / "hard" / "local" / "old.wav"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(held)
+    result = recordings.fetch(project)
+    assert result.eval == 1 and result.hard == 1 and result.removed == 1
+    held_hashes = {hashlib.sha256(p.read_bytes()).digest() for p in audio.wavs(project.recordings / "eval")}
+    training_hashes = {
+        hashlib.sha256(p.read_bytes()).digest()
+        for p in audio.wavs(project.recordings / "train", project.recordings / "hard")
+    }
+    assert not held_hashes & training_hashes
+    assert (tmp_path / "hard" / "different_name.wav").read_bytes() == held
+    assert recordings.fetch(project).removed == 0
 
 
 def test_speech_preset_from_parquet(tmp_path, server):

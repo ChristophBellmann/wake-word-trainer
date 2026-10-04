@@ -141,9 +141,18 @@ def fetch(project: Project) -> FetchResult:
     share = float(project.config["recordings"]["eval_share"])
     root = project.recordings
     wanted: dict[Path, bytes] = {}
+    held_out = set()
     for device, filename, data in positives:
-        wanted[root / split_for(_sha256(data), share) / device / filename] = data
+        digest = _sha256(data)
+        split = split_for(digest, share)
+        wanted[root / split / device / filename] = data
+        if split == "eval":
+            held_out.add(digest)
     for device, filename, data in hard:
+        # A difficult-example folder may repeat ordinary recordings. Evaluation
+        # always wins: keep the clip held out, regardless of its source/name.
+        if _sha256(data) in held_out:
+            continue
         wanted[root / "hard" / device / filename] = data
     for device, filename, data in negatives:
         wanted[root / "negative" / split_for(_sha256(data), share) / device / filename] = data
