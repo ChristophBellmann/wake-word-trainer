@@ -1,3 +1,3 @@
 """From your own recordings to a microWakeWord model for ESPHome."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -34,6 +34,7 @@ Configuration (YAML):
 from __future__ import annotations
 
 import hmac
+import importlib.util
 import json
 import os
 import random
@@ -50,6 +51,7 @@ from typing import Any
 import yaml
 
 from . import audio
+from .extraction import MAX_BYTES, Extractor
 from .project import Project
 from .resources import Resources
 from .state import State, now, read
@@ -76,6 +78,9 @@ class Service:
         self.process: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.speaker_lock = threading.Lock()
+        self.extraction_config = config.get("extraction") or {}
+        self.extractor = Extractor(self.extraction_config, self.project.config["language"])
+        self.extraction_lock = threading.Lock()
         self.resources = Resources(self.project.root, config.get("pause_services") or [])
         self.resources.release()
         self.watcher: threading.Thread | None = None
@@ -163,6 +168,10 @@ class Service:
             gpu=gpu(),
             profiles={key: value.get("label", key) for key, value in self.profiles.items()},
             speaker_routes=sorted(self.routes),
+            extraction={
+                "enabled": bool(self.extraction_config.get("enabled", False)),
+                "available": importlib.util.find_spec("faster_whisper") is not None,
+            },
         )
         return state
 
@@ -187,6 +196,28 @@ class Service:
         if result.returncode != 0:
             return 500, {"error": "playback failed", "detail": result.stderr.decode(errors="replace")[-300:]}
         return 200, {"route": route, "clip": str(clip.relative_to(self.project.root))}
+
+    def extract(self, body: bytes, phrases: list[str]) -> tuple[int, dict]:
+        if not self.extraction_config.get("enabled", False):
+            return 503, {"error": "extraction disabled; enable extraction in service.yaml"}
+        if (
+            not isinstance(phrases, list)
+            or not 1 <= len(phrases) <= 32
+            or any(not isinstance(p, str) or not 1 <= len(p) <= 120 for p in phrases)
+        ):
+            return 400, {"error": "invalid phrases"}
+        if not self.extraction_lock.acquire(blocking=False):
+            return 409, {"error": "extraction busy; retry later"}
+        try:
+            return 200, self.extractor.extract(body, phrases)
+        except ValueError:
+            return 400, {"error": "invalid mono PCM16 WAV (0.5-120 seconds, 16/48 kHz)"}
+        except ImportError:
+            return 503, {"error": "install wake-word-trainer[segment]"}
+        except Exception:
+            return 503, {"error": "local speech recognition failed; check extraction model configuration"}
+        finally:
+            self.extraction_lock.release()
 
     # -- Files ----------------------------------------------------------------------
 
@@ -276,6 +307,20 @@ def handler(service: Service):
         def do_POST(self):
             if not self._authorized():
                 return self._send(401, {"error": "unauthorized"})
+            if self.path == "/v1/extract":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    raw = self.headers.get("X-Wakeword-Phrases", "[]")
+                    if len(raw) > 4096 or not 44 <= length <= MAX_BYTES:
+                        return self._send(413, {"error": "invalid request size"})
+                    phrases = json.loads(raw)
+                    self.connection.settimeout(30)
+                    audio_body = self.rfile.read(length)
+                    if len(audio_body) != length:
+                        return self._send(400, {"error": "incomplete WAV"})
+                except (ValueError, TimeoutError):
+                    return self._send(400, {"error": "invalid extraction request"})
+                return self._send(*service.extract(audio_body, phrases))
             body = self._body()
             if self.path == "/v1/start":
                 return self._send(*service.start(str(body.get("profile", "recommended"))))

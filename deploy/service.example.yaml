@@ -15,3 +15,13 @@ speaker_test:                               # optional: play held-out recordings
   routes:
     speakers: [paplay, "{file}"]
     usb: [aplay, -D, "plughw:2,0", "{file}"]
+
+# Optional automatic clip extraction for the Collector; install the segment extra.
+# Independent CPU speech recognition; no training GPU or wake-word model required.
+extraction:
+  enabled: true
+  model: small                 # multilingual Whisper model, or local model folder
+  cpu_threads: 4
+  padding_ms: 200               # context before/after the phrase, clipped at other speech
+  min_probability: 0.35
+  silence_ms: 500               # separate repeated phrases at these speech pauses
