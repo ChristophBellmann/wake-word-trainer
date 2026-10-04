@@ -116,8 +116,8 @@ def test_http_auth_body_limits_and_service_extraction():
     try:
         assert post(wav(0.5), auth=False)[0] == 401
         assert post(wav())[1]["duration_ms"] == 30000
-        assert post(wav(), **{"X-Wakeword-Phrases": "broken"})[0] == 400
-        assert post(wav(), **{"X-Wakeword-Phrases": '"not a list"'})[0] == 400
+        assert post(wav(0.5), **{"X-Wakeword-Phrases": "broken"})[0] == 400
+        assert post(wav(0.5), **{"X-Wakeword-Phrases": '"not a list"'})[0] == 400
         assert post(b"small", **{"Content-Length": str(MAX_BYTES + 1)})[0] == 413
         service.extraction_lock.acquire()
         assert post(wav())[0] == 409
