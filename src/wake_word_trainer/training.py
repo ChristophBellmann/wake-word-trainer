@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Callable
@@ -109,6 +110,7 @@ def _stream(command: list[str], log_path: Path, on_step: Callable[[int], None] |
         for line in process.stdout:
             sys.stdout.write(line)
             log.write(line)
+            log.flush()
             match = STEP_LINE.search(line)
             if match and on_step:
                 on_step(int(match.group(1)))
@@ -129,6 +131,8 @@ def train(
     config_path.write_text(yaml.safe_dump(config(project, downloads), sort_keys=False), encoding="utf-8")
     command = [
         sys.executable,
+        "-X",
+        "faulthandler",
         "-m",
         "microwakeword.model_train_eval",
         f"--training_config={config_path}",
@@ -157,5 +161,7 @@ def train(
     else:
         returncode = _stream(command, project.path("training.log"), on_step)
     if returncode != 0 or not model.is_file():
+        if returncode < 0:
+            raise ProjectError(f"Training crashed ({signal.Signals(-returncode).name}); see training.log")
         raise ProjectError(f"Training failed (exit {returncode}); see training.log")
     return model
