@@ -16,7 +16,7 @@ satellite ──► Wake Word Collector (Home Assistant) ──► Wake Word Tra
 It also works without the collector, from folders of WAV files or synthetic
 speech alone. Training uses [microWakeWord](https://github.com/kahrendt/microWakeWord)
 (as a dependency) and [Piper](https://github.com/OHF-Voice/piper1-gpl) voices
-through [piper-sample-generator](https://github.com/rhasspy/piper-sample-generator).
+directly through Piper’s ONNX API.
 
 [Deutsch weiter unten](#deutsch)
 
@@ -53,7 +53,8 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install "wake-word-trainer[train,tts] @ git+https://github.com/ChristophBellmann/wake-word-trainer"
 ```
 
-`train` brings TensorFlow and microWakeWord, `tts` brings PyTorch and Piper.
+`train` brings TensorFlow and microWakeWord, `tts` brings Piper and ONNX Runtime.
+Synthetic speech runs on the CPU; training uses the configured TensorFlow GPU.
 Without `tts` you can still train from your own recordings.
 
 microWakeWord is pinned to a fixed upstream version, installed from the branch
@@ -71,12 +72,20 @@ Install them first, then the trainer **without letting pip replace them**:
 python3 -m venv .venv && . .venv/bin/activate
 pip install /path/to/tensorflow_rocm*.whl            # your ROCm TensorFlow
 python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
-pip freeze | grep -iE "^(tensorflow|numpy|protobuf)" > keep.txt
+python - <<'PYTHON'
+from importlib.metadata import version
+from pathlib import Path
+Path("keep.txt").write_text("".join(f"{name}=={version(name)}\n" for name in ("tensorflow", "numpy", "protobuf")))
+PYTHON
 pip install -c keep.txt "wake-word-trainer[train,tts] @ git+https://github.com/ChristophBellmann/wake-word-trainer"
 ```
 
-The constraints file keeps TensorFlow, NumPy and protobuf as they are; pip
-fails instead of breaking the GPU stack if something does not fit.
+Die Constraints-Datei hält TensorFlow, NumPy und protobuf fest, auch wenn
+TensorFlow aus einer lokalen Wheel-Datei installiert wurde. Die
+Sprachgenerierung verwendet Piper direkt und braucht weder PyTorch noch den
+Piper Sample Generator mit dessen NumPy-2-Abhängigkeit. Das ist auch mit
+NumPy 1.26 geprüft. Bei systemd die ROCm-Bibliothekspfade des funktionierenden
+Terminal-Trainings in die lokale Dienstkonfiguration übernehmen.
 
 ## Quick start with the Wake Word Collector
 

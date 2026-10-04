@@ -25,9 +25,9 @@ train = [
     # Used by microWakeWord's training loop but not declared there.
     "tensorboard",
 ]
-# Synthetic speech with Piper voices (PyTorch).
+# Synthetic speech with Piper ONNX voices (CPU; independent of the training GPU).
 tts = [
-    "piper-sample-generator>=3.2",
+    "piper-tts>=1.3,<2",
 ]
 dev = ["pytest", "ruff"]
 

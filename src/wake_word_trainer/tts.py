@@ -1,4 +1,4 @@
-"""Synthetic speech with Piper voices (package piper-sample-generator).
+"""Synthetic speech with Piper ONNX voices (package piper-tts).
 
 Synthetic samples add many voices and speaking speeds that your own
 recordings cannot cover. They are only used for training, never for the
@@ -26,7 +26,9 @@ def voices(project: Project) -> list[Path]:
     for path in paths:
         if not path.is_file():
             raise ProjectError(f"Voice missing: {path}")
-        if path.suffix == ".onnx" and not Path(f"{path}.json").is_file():
+        if path.suffix != ".onnx":
+            raise ProjectError(f"tts.voices requires Piper .onnx files: {path}")
+        if not Path(f"{path}.json").is_file():
             raise ProjectError(f"Voice config missing: {path}.json")
     return paths
 
@@ -56,7 +58,7 @@ def generate_set(
         command = [
             sys.executable,
             "-m",
-            "piper_sample_generator",
+            "wake_word_trainer.piper_generate",
             phrase,
             *model_args,
             "--max-samples",

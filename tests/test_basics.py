@@ -5,14 +5,17 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+import sys
+import wave
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import yaml
 
-from wake_word_trainer import audio, downloads, recordings, tts
+from wake_word_trainer import audio, downloads, piper_generate, recordings, tts
 from wake_word_trainer.cli import main
 from wake_word_trainer.evaluate import COOLDOWN_SLICES, Report, choose, false_accepts_per_hour, moving_average
 from wake_word_trainer.export import export, manifest
@@ -169,6 +172,41 @@ def test_generate_needs_voices(tmp_path):
     project = Project.create(tmp_path / "p", "Hey Nova")
     with pytest.raises(ProjectError, match=r"tts\.voices"):
         tts.generate(project)
+
+
+def test_piper_onnx_resumes_interrupted_wavs_and_varies_voices(tmp_path, monkeypatch):
+    calls = []
+    fail = True
+
+    class Voice:
+        config = SimpleNamespace(num_speakers=2)
+
+        @staticmethod
+        def load(model, use_cuda):
+            assert use_cuda is False
+            voice = Voice()
+            voice.model = model
+            return voice
+
+        def synthesize_wav(self, text, output, syn_config):
+            nonlocal fail
+            output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            output.writeframes(b"\x00\x00" * 160)
+            if fail and len(calls) == 1:
+                fail = False
+                raise RuntimeError("interrupted")
+            calls.append((self.model, text, syn_config.speaker_id, syn_config.length_scale))
+
+    monkeypatch.setitem(sys.modules, "piper", SimpleNamespace(PiperVoice=Voice, SynthesisConfig=SimpleNamespace))
+    with pytest.raises(RuntimeError, match="interrupted"):
+        piper_generate.generate("hey nova", ["a", "b"], 8, tmp_path, [0.8, 1.2])
+    assert len(list(tmp_path.glob("*.wav"))) == 1
+    piper_generate.generate("hey nova", ["a", "b"], 8, tmp_path, [0.8, 1.2])
+    assert len(calls) == 8 and len(set(calls)) == 8
+    assert not list(tmp_path.glob("*.part"))
+    for path in tmp_path.glob("*.wav"):
+        with wave.open(str(path)) as clip:
+            assert clip.getnframes() == 160
 
 
 # -- Downloads ------------------------------------------------------------------------
