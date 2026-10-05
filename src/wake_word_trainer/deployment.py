@@ -120,7 +120,7 @@ def _deploy(project: Project) -> bool:
         .replace("{parity}", str(project.path("parity.json")))
         for part in config["command"]
     ]
-    record(project, "running", model_sha256=digest(candidate), started_at=now())
+    record(project, "running", model_sha256=digest(candidate), started_at=now(), pid=os.getpid())
     # Do not capture commands or credentials in HTTP output. Detailed output is local only.
     with project.path("deployment.log").open("a") as log:
         result = subprocess.run(command, cwd=project.root, stdout=log, stderr=subprocess.STDOUT, check=False)

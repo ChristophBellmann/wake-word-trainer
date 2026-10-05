@@ -151,3 +151,21 @@ def test_ui_training_blocked_during_cli_rollout(tmp_path, monkeypatch):
     record(project, "running")
     assert service.start("quick")[0] == 409
     assert active == {"llm.service"}
+
+
+def test_service_restart_keeps_a_live_external_rollout_blocking(tmp_path, monkeypatch):
+    import os
+
+    from wake_word_trainer.deployment import record
+    from wake_word_trainer.project import Project
+    from wake_word_trainer.service import Service
+
+    active = {"llm.service"}
+    systemd(monkeypatch, active)
+    project = Project.create(tmp_path / "p", "Hey Nova")
+    token = tmp_path / "token"
+    token.write_text("x" * 32)
+    record(project, "running", pid=os.getpid())
+    service = Service({"project": project.root, "token_file": token})
+    assert service.status()["deployment"]["state"] == "running"
+    assert service.start("quick")[0] == 409

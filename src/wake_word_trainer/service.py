@@ -86,10 +86,16 @@ class Service:
         self.resources.release()
         self.watcher: threading.Thread | None = None
         deployment_path = self.project.path("deployment.json")
-        if deployment_path.is_file() and json.loads(deployment_path.read_text()).get("state") == "running":
-            from .deployment import record
+        if deployment_path.is_file():
+            deployment = json.loads(deployment_path.read_text())
+            pid = deployment.get("pid")
+            if deployment.get("state") == "running" and type(pid) is int:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    from .deployment import record
 
-            record(self.project, "failed", reason="Service restarted during rollout; retry deployment")
+                    record(self.project, "failed", reason="Interrupted rollout; retry deployment")
         state = read(self.project)
         if state.get("state") in ("running", "starting"):
             State(self.project).update(state="failed", ended_at=now(), last_error="Interrupted: the service restarted")
