@@ -94,6 +94,10 @@ class Service:
         if state.get("state") in ("running", "starting"):
             State(self.project).update(state="failed", ended_at=now(), last_error="Interrupted: the service restarted")
 
+        from .scheduler import Scheduler
+
+        self.automatic = Scheduler(self, config.get("automatic_training") or {})
+
     # -- Runs -------------------------------------------------------------------
 
     def running(self) -> bool:
@@ -195,6 +199,7 @@ class Service:
         if deployment_path.is_file():
             state["deployment"] = json.loads(deployment_path.read_text())
         state.update(
+            automatic_training=dict(self.automatic.status),
             workstation_online=True,
             wake_word=self.project.config["wake_word"],
             slug=self.project.slug,
@@ -375,6 +380,7 @@ def make_server(config: dict[str, Any]) -> tuple[ThreadingHTTPServer, Service]:
 def serve(config_path: Path) -> None:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     server, service = make_server(config)
+    service.automatic.start()
 
     def terminate(_signal, _frame):
         raise KeyboardInterrupt
@@ -386,5 +392,6 @@ def serve(config_path: Path) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        service.automatic.close()
         service.stop()
         server.server_close()
