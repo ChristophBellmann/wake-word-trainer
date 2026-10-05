@@ -74,6 +74,11 @@ def run(
         best_threshold=None,
         phase="fetch",
     )
+    if project.config["deployment"]["enabled"]:
+        from .deployment import record
+
+        record(project, "pending", reason="Waiting for training and comparison")
+        project.path("parity.json").unlink(missing_ok=True)
     try:
         if project.config["collector"]["url"] or any(
             project.config["recordings"][key] for key in ("folders", "hard_folders", "negative_folders")
@@ -135,6 +140,19 @@ def run(
         if not best.recall:
             raise ProjectError(f"The model recognizes none of the held-out recordings; not exported. {best.summary()}")
         manifest = export(project, best_model, best)
+        if project.config["deployment"]["enabled"]:
+            from .deployment import assess, record
+
+            state.update(phase="parity")
+            try:
+                parity = assess(project, downloads)
+                record(project, "ready" if parity["passed"] else "blocked", reason=parity["reason"])
+                log(f"Deployment parity: {parity['reason']}")
+            except Exception as err:
+                # A comparison failure must block flashing, while preserving the trained model.
+                record(project, "blocked", reason=f"Comparison failed ({type(err).__name__})")
+                project.path("parity.json").unlink(missing_ok=True)
+                log(f"Deployment blocked: comparison failed ({type(err).__name__})")
         message = f"Round {best_round} of {total}: {best.summary()}"
         state.update(
             state="completed",

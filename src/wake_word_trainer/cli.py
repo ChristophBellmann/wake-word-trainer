@@ -162,7 +162,9 @@ def cmd_export(args: argparse.Namespace) -> None:
     report_path = project.path("report.json")
     if not report_path.is_file():
         raise ProjectError("No evaluation: run evaluate first")
-    report = Report(**json.loads(report_path.read_text(encoding="utf-8")))
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    data.pop("parity", None)
+    report = Report(**data)
     manifest = export(project, _model(project), report)
     print(f"Exported {manifest} and {manifest.with_suffix('.tflite')}\n")
     print(esphome_snippet(manifest))
@@ -189,6 +191,18 @@ def cmd_run(args: argparse.Namespace) -> None:
     print(esphome_snippet(project.export_dir / f"{project.slug}.json"))
 
 
+def cmd_deploy(args: argparse.Namespace) -> None:
+    from .deployment import assess, deploy
+
+    project = Project.load(args.project)
+    if args.compare:
+        parity = assess(project, _downloads(project, args))
+        print(parity["reason"])
+    if not deploy(project):
+        raise ProjectError("Deployment blocked or failed; see deployment.json and deployment.log")
+    print("Firmware rollout completed")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     from .service import serve
 
@@ -209,6 +223,7 @@ COMMANDS = {
     "mine": cmd_mine,
     "status": cmd_status,
     "serve": cmd_serve,
+    "deploy": cmd_deploy,
 }
 
 
@@ -254,6 +269,10 @@ def parser() -> argparse.ArgumentParser:
     compare.add_argument("--current", action="store_true", help="include this project's exported model")
     sub.add_parser("mine", help="collect what the trained model wrongly reacts to (then train again)")
     sub.add_parser("status", help="progress of the current or last run")
+    deploy = sub.add_parser("deploy", help="retry the configured firmware rollout after a passed comparison")
+    deploy.add_argument(
+        "--compare", action="store_true", help="compare the current export against the deployed reference"
+    )
     serve = sub.add_parser("serve", help="HTTP service for Home Assistant (see README)")
     serve.add_argument("--config", required=True, help="service configuration (YAML)")
     return main

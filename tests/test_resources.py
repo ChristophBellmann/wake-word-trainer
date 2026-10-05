@@ -92,3 +92,46 @@ def test_service_restores_resources_after_natural_exit(tmp_path, monkeypatch):
     service.watcher.join(timeout=5)
     assert not service.watcher.is_alive()
     assert active == {"llm.service"}
+
+
+def test_rollout_starts_after_gpu_resources_restore(tmp_path, monkeypatch):
+    import sys
+
+    from wake_word_trainer.deployment import record
+    from wake_word_trainer.project import Project
+    from wake_word_trainer.service import Service
+    from wake_word_trainer.state import State
+
+    active = {"llm.service"}
+    systemd(monkeypatch, active)
+    project = Project.create(
+        tmp_path / "p",
+        "Hey Nova",
+        deployment={"enabled": True, "reference_model": "deployed/model.tflite", "command": ["flash"]},
+    )
+    token = tmp_path / "token"
+    token.write_text("x" * 32)
+    service = Service({"project": project.root, "token_file": token, "pause_services": ["llm.service"]})
+    service.resources.acquire()
+    assert not active
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    service.process = process
+    State(project).update(state="completed", best_model_available=True)
+    record(project, "ready")
+    real = subprocess.Popen
+    calls = []
+
+    def launch(command, **kwargs):
+        assert active == {"llm.service"}
+        calls.append(command)
+        return real([sys.executable, "-c", "pass"], **kwargs)
+
+    monkeypatch.setattr("wake_word_trainer.service.subprocess.Popen", launch)
+    service._finished(process)
+    assert calls[0][2] == "wake_word_trainer.deployment"
+
+    # A data-only run must never deploy an old ready model.
+    calls.clear()
+    State(project).update(state="completed", best_model_available=False)
+    service._finished(process)
+    assert not calls

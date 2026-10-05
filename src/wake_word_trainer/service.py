@@ -76,6 +76,7 @@ class Service:
         self.profiles: dict[str, dict] = config.get("profiles") or DEFAULT_PROFILES
         self.routes: dict[str, list[str]] = (config.get("speaker_test") or {}).get("routes") or {}
         self.process: subprocess.Popen | None = None
+        self.deployment_process: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.speaker_lock = threading.Lock()
         self.extraction_config = config.get("extraction") or {}
@@ -84,6 +85,11 @@ class Service:
         self.resources = Resources(self.project.root, config.get("pause_services") or [])
         self.resources.release()
         self.watcher: threading.Thread | None = None
+        deployment_path = self.project.path("deployment.json")
+        if deployment_path.is_file() and json.loads(deployment_path.read_text()).get("state") == "running":
+            from .deployment import record
+
+            record(self.project, "failed", reason="Service restarted during rollout; retry deployment")
         state = read(self.project)
         if state.get("state") in ("running", "starting"):
             State(self.project).update(state="failed", ended_at=now(), last_error="Interrupted: the service restarted")
@@ -98,8 +104,9 @@ class Service:
         if profile is None:
             return 400, {"error": "unknown profile", "profiles": sorted(self.profiles)}
         with self.lock:
-            if self.running():
-                return 409, {"error": "a run is active"}
+            if self.running() or (self.deployment_process is not None and self.deployment_process.poll() is None):
+                return 409, {"error": "a run or firmware rollout is active"}
+            self.project = Project.load(self.project.root)
             command = [sys.executable, "-m", "wake_word_trainer", "-p", str(self.project.root)]
             if self.downloads:
                 command += ["--downloads", str(self.downloads)]
@@ -138,6 +145,22 @@ class Service:
             except Exception as err:
                 State(self.project).update(state="failed", ended_at=now(), last_error=f"Resource restore failed: {err}")
 
+            # Restore GPU services before compiling firmware. Reserve the rollout under
+            # the same lock as start(), then wait without holding up HTTP requests.
+            deployment = self.project.path("deployment.json")
+            ready = deployment.is_file() and json.loads(deployment.read_text()).get("state") == "ready"
+            trained = read(self.project).get("best_model_available")
+            if process.returncode == 0 and trained and ready and self.project.config["deployment"]["enabled"]:
+                with self.project.path("deployment.log").open("a") as log:
+                    self.deployment_process = subprocess.Popen(
+                        [sys.executable, "-m", "wake_word_trainer.deployment", str(self.project.root)],
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+        if self.deployment_process is not None:
+            self.deployment_process.wait()
+
     def stop(self) -> tuple[int, dict]:
         with self.lock:
             if not self.running():
@@ -161,6 +184,9 @@ class Service:
         if state.get("state") in ("running", "starting") and not self.running():
             state["state"] = "failed"
             state["last_error"] = state.get("last_error") or "The run ended unexpectedly; see service.log"
+        deployment_path = self.project.path("deployment.json")
+        if deployment_path.is_file():
+            state["deployment"] = json.loads(deployment_path.read_text())
         state.update(
             workstation_online=True,
             wake_word=self.project.config["wake_word"],

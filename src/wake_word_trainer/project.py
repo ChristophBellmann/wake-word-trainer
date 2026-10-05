@@ -102,6 +102,7 @@ DEFAULTS: dict[str, Any] = {
         "max_own_negative_share": 0.05,
         "sliding_window_size": 5,
     },
+    "deployment": {"enabled": False, "reference_model": "", "command": []},
     "export": {
         "author": "",
         "website": "",
@@ -206,6 +207,14 @@ class Project:
         seed = config["training"].get("seed")
         if seed is not None and (type(seed) is not int or not 0 <= seed < 2**32):
             raise ProjectError("training.seed must be null or an integer in 0..4294967295")
+
+        deployment = config["deployment"]
+        if deployment["enabled"]:
+            if not deployment["reference_model"]:
+                raise ProjectError("deployment.reference_model is required")
+            command = deployment["command"]
+            if not isinstance(command, list) or not command or not all(isinstance(p, str) for p in command):
+                raise ProjectError("deployment.command must be a nonempty list of command arguments")
 
     # -- Paths ----------------------------------------------------------------
 
