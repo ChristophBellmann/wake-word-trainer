@@ -104,7 +104,13 @@ class Service:
         if profile is None:
             return 400, {"error": "unknown profile", "profiles": sorted(self.profiles)}
         with self.lock:
-            if self.running() or (self.deployment_process is not None and self.deployment_process.poll() is None):
+            deployment_path = self.project.path("deployment.json")
+            deploying = deployment_path.is_file() and json.loads(deployment_path.read_text()).get("state") == "running"
+            if (
+                deploying
+                or self.running()
+                or (self.deployment_process is not None and self.deployment_process.poll() is None)
+            ):
                 return 409, {"error": "a run or firmware rollout is active"}
             self.project = Project.load(self.project.root)
             command = [sys.executable, "-m", "wake_word_trainer", "-p", str(self.project.root)]
@@ -144,6 +150,7 @@ class Service:
                 self.resources.release()
             except Exception as err:
                 State(self.project).update(state="failed", ended_at=now(), last_error=f"Resource restore failed: {err}")
+                return
 
             # Restore GPU services before compiling firmware. Reserve the rollout under
             # the same lock as start(), then wait without holding up HTTP requests.

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from .project import Project, ProjectError
@@ -81,12 +83,21 @@ def assess(project: Project, downloads: Path) -> dict:
 
 
 def record(project: Project, state: str, **values) -> None:
-    project.path("deployment.json").write_text(
-        json.dumps({"state": state, "updated_at": now(), **values}, indent=2) + "\n"
-    )
+    with tempfile.NamedTemporaryFile(mode="w", dir=project.root, delete=False, encoding="utf-8") as stream:
+        stream.write(json.dumps({"state": state, "updated_at": now(), **values}, indent=2) + "\n")
+        temporary = stream.name
+    os.replace(temporary, project.path("deployment.json"))
 
 
 def deploy(project: Project) -> bool:
+    try:
+        return _deploy(project)
+    except Exception as err:
+        record(project, "failed", reason=f"Deployment failed ({type(err).__name__}); see deployment.log")
+        return False
+
+
+def _deploy(project: Project) -> bool:
     config = project.config["deployment"]
     parity = json.loads(project.path("parity.json").read_text())
     candidate = project.export_dir / f"{project.slug}.tflite"

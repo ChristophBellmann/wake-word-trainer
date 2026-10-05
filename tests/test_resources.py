@@ -135,3 +135,19 @@ def test_rollout_starts_after_gpu_resources_restore(tmp_path, monkeypatch):
     State(project).update(state="completed", best_model_available=False)
     service._finished(process)
     assert not calls
+
+
+def test_ui_training_blocked_during_cli_rollout(tmp_path, monkeypatch):
+    from wake_word_trainer.deployment import record
+    from wake_word_trainer.project import Project
+    from wake_word_trainer.service import Service
+
+    active = {"llm.service"}
+    systemd(monkeypatch, active)
+    project = Project.create(tmp_path / "p", "Hey Nova")
+    token = tmp_path / "token"
+    token.write_text("x" * 32)
+    service = Service({"project": project.root, "token_file": token, "pause_services": ["llm.service"]})
+    record(project, "running")
+    assert service.start("quick")[0] == 409
+    assert active == {"llm.service"}

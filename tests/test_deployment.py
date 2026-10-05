@@ -79,6 +79,9 @@ def test_assess_and_deploy(tmp_path: Path, monkeypatch):
     project.config["deployment"]["command"] = [sys.executable, "-c", "raise SystemExit(1)"]
     assert not deploy(project)
     assert reference.read_bytes() == b"old"
+    project.config["deployment"]["command"] = [str(tmp_path / "missing-command")]
+    assert not deploy(project)
+    assert json.loads(project.path("deployment.json").read_text())["state"] == "failed"
     project.config["deployment"]["command"] = [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('{{sha256}}')"]
     assert deploy(project)
     assert marker.read_text() == digest(model)
