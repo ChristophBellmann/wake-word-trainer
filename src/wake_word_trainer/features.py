@@ -120,11 +120,8 @@ def speech_clips(project: Project, downloads: Path) -> list[Path]:
 def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]:
     seed = project.config["training"].get("seed")
     if seed is not None:
-        import torch
-
         random.seed(seed)
         np.random.seed(seed)
-        torch.manual_seed(seed)
     recordings = project.recordings
     own_train = audio.wavs(recordings / "train")
     own_eval = audio.wavs(recordings / "eval")
