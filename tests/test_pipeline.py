@@ -63,7 +63,8 @@ def test_train_evaluate_export(tmp_path):
         f"  hard_folders: [{tmp_path / 'hard'}]\n"
         f"  negative_folders: [{tmp_path / 'neg'}]\n"
         f"negatives: {{speech_folders: [{tmp_path / 'speech'}], speech_clips: 20}}\n"
-        "training: {steps: 300, batch_size: 32, eval_step_interval: 100, own_repeat: 2, mining_samples: 300}\n"
+        "training: {seed: 42, steps: 600, batch_size: 32, eval_step_interval: 100, "
+        "own_repeat: 2, mining_samples: 300}\n"
         "evaluation: {max_false_accepts_per_hour: 5}\n"
     )
     (project / "wakeword.yaml").write_text(config)

@@ -174,6 +174,7 @@ augmentation:
   background_folders: []      # e.g. recordings of your own living room
   rir_folders: []
 training:
+  seed: null                 # optional integer: augmentation, sampling and model initialization
   steps: 20000                # per round
   batch_size: 128
   learning_rate: 0.001

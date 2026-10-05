@@ -134,7 +134,7 @@ def train(
         "-X",
         "faulthandler",
         "-m",
-        "microwakeword.model_train_eval",
+        "wake_word_trainer.training_worker",
         f"--training_config={config_path}",
         "--train",
         "1",
@@ -154,6 +154,9 @@ def train(
         "best_weights",
         *MODEL_ARGS,
     ]
+    seed = project.config["training"].get("seed")
+    if seed is not None:
+        command[5:5] = ["--seed", str(seed)]
     model = project.model_dir / TFLITE
     model.unlink(missing_ok=True)  # never mistake the previous round's model for this one
     if runner is not None:

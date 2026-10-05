@@ -65,6 +65,7 @@ DEFAULTS: dict[str, Any] = {
         "rir_folders": [],
     },
     "training": {
+        "seed": None,  # optional reproducible augmentation, sampling and model initialization
         "steps": 20000,
         "batch_size": 128,
         "learning_rate": 0.001,
@@ -202,6 +203,9 @@ class Project:
             raise ProjectError("evaluation.sliding_window_size must be 1..20")
         if int(config["training"]["steps"]) < 1:
             raise ProjectError("training.steps must be positive")
+        seed = config["training"].get("seed")
+        if seed is not None and (type(seed) is not int or not 0 <= seed < 2**32):
+            raise ProjectError("training.seed must be null or an integer in 0..4294967295")
 
     # -- Paths ----------------------------------------------------------------
 

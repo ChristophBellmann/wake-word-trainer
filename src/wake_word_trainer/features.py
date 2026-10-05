@@ -10,6 +10,7 @@ set whenever there are any; synthetic speech then only trains.
 
 from __future__ import annotations
 
+import random
 import shutil
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
@@ -117,6 +118,13 @@ def speech_clips(project: Project, downloads: Path) -> list[Path]:
 
 
 def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]:
+    seed = project.config["training"].get("seed")
+    if seed is not None:
+        import torch
+
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
     recordings = project.recordings
     own_train = audio.wavs(recordings / "train")
     own_eval = audio.wavs(recordings / "eval")
