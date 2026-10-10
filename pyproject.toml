@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wake-word-trainer"
-version = "0.4.0"
+version = "0.5.0"
 description = "Train a microWakeWord model for ESPHome from your own recordings (Wake Word Collector) plus synthetic speech"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -52,4 +52,7 @@ select = ["E", "F", "W", "I", "B", "UP", "RUF"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: needs the train extra (TensorFlow); trains a tiny model"]
+markers = [
+    "slow: needs the train extra (TensorFlow); trains a tiny model",
+    "real_system: reads the real /proc and load functions instead of healthy test values",
+]

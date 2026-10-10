@@ -247,6 +247,28 @@ der Zustand liegt lokal im Projekt unter `paused_services.json`. Die Namen
 sind Beispiele; ohne diese Einstellung wird kein anderer Dienst verwaltet.
 Dies gilt für `serve`; direkte CLI-Läufe verwalten keine fremden Dienste.
 
+### Freie Systemressourcen vor und während eines Laufs
+
+Pausierte Dienste machen VRAM frei, aber nicht den Arbeitsspeicher, den ein
+anderer Prozess belegt. Ein Training, das auslagern muss, kommt kaum voran.
+`serve` prüft deshalb vor jedem Start (aus Home Assistant, über die API und für
+das nächtliche Training) und lehnt mit HTTP 503 und dem Grund ab:
+
+```yaml
+resource_check:                 # alle Werte optional
+  min_available_memory_gb: 6    # MemAvailable vor und während des Laufs
+  max_load_per_cpu: 0.75        # Last pro CPU vor dem Start
+  min_free_vram_gb: 8           # nach dem Pausieren der Dienste; ohne Angabe nicht geprüft
+  wait_seconds: 10              # Zeit, bis freigegebener VRAM sichtbar ist
+```
+
+Abgelehnte Starts verändern den Zustand des letzten Laufs nicht. Scheitert
+die VRAM-Prüfung nach dem Pausieren, startet der Trainer die Dienste wieder.
+Während eines Laufs prüft er den Arbeitsspeicher alle 30 Sekunden.
+`/v1/status` zeigt unter `resources` die Messwerte und eine Warnung, die auch
+in `service.log` steht. Die Warnung bricht den Lauf nicht ab.
+`enabled: false` schaltet die Prüfung ab.
+
 ## Replacing a model you already use
 
 Measure before you switch:

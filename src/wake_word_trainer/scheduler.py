@@ -103,6 +103,7 @@ class Scheduler:
         night = in_window(at.time(), self.config["start"], self.config["end"])
         idle = self.idle()
         self.status.update(idle_seconds=round(idle), in_window=night)
+        self.status.pop("problems", None)
         if self.process is not None:
             if self.process.poll() is not None:
                 if read(self.service.project).get("state") == "completed" and self.process.returncode == 0:
@@ -158,13 +159,16 @@ class Scheduler:
             return
         if self.stop_event.is_set():
             return
-        code, _ = self.service.start(self.config["profile"])
+        code, answer = self.service.start(self.config["profile"])
         if code == 202:
             self.process = self.service.process
             self.pending = sorted(samples)
             self.saved["last_attempt_at"] = at.isoformat()
             self._save()
             self.status["state"] = "training"
+        elif code == 503 and answer.get("problems"):
+            self.status["state"] = "resources_insufficient"
+            self.status["problems"] = answer["problems"]
         else:
             self.status["state"] = "run_or_rollout_active"
 

@@ -75,3 +75,12 @@ def server():
     yield start
     for item in servers:
         item.close()
+
+
+@pytest.fixture(autouse=True)
+def free_system(monkeypatch, request):
+    """Service tests must not depend on the memory and load of the computer running them."""
+    if "real_system" in request.keywords:
+        return
+    monkeypatch.setattr("wake_word_trainer.system_check.memory", lambda: {"available_memory_gb": 64.0})
+    monkeypatch.setattr("wake_word_trainer.system_check.load_per_cpu", lambda: 0.1)

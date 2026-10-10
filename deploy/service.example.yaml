@@ -6,6 +6,8 @@ bind: 0.0.0.0
 port: 10701
 # Optional: free VRAM during runs; restart only services that were active before.
 # pause_services: [llama-server.service, orpheus-llm.service, wyoming-orpheus.service]
+# Optional: refuse to start without free memory (and VRAM); warn while a run swaps.
+# resource_check: {min_available_memory_gb: 6, max_load_per_cpu: 0.75, min_free_vram_gb: 8}
 profiles:                                   # what Home Assistant can start
   quick: {label: Quick, rounds: 0, steps: 10000}
   recommended: {label: Recommended, rounds: 2}

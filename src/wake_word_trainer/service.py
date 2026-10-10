@@ -29,6 +29,9 @@ Configuration (YAML):
       routes:
         speakers: [paplay, "{file}"]
         usb: [aplay, -D, "plughw:2,0", "{file}"]
+    resource_check:                         # optional, see system_check.py
+      min_available_memory_gb: 6
+      min_free_vram_gb: 8
 """
 
 from __future__ import annotations
@@ -55,6 +58,7 @@ from .extraction import MAX_BYTES, Extractor
 from .project import Project
 from .resources import Resources
 from .state import State, now, read
+from .system_check import SystemCheck
 
 DEFAULT_PROFILES = {
     "quick": {"label": "Quick", "rounds": 0, "steps": 10000},
@@ -84,6 +88,8 @@ class Service:
         self.extraction_lock = threading.Lock()
         self.resources = Resources(self.project.root, config.get("pause_services") or [])
         self.resources.release()
+        self.system = SystemCheck(config.get("resource_check"))
+        self.resource_warning = ""
         self.watcher: threading.Thread | None = None
         deployment_path = self.project.path("deployment.json")
         if deployment_path.is_file():
@@ -133,11 +139,19 @@ class Service:
                 command += ["--rounds", str(int(profile["rounds"]))]
             if "steps" in profile:
                 command += ["--steps", str(int(profile["steps"]))]
+            problems = self.system.before_start()
+            if problems:
+                # Nothing started: the last run's state stays as it was.
+                return 503, self._not_enough(problems, record=False)
             State(self.project).update(state="starting", profile=profile_id, started_at=now(), message="")
             log = self.project.path("service.log").open("a", encoding="utf-8")
             try:
                 self.resources.release()
                 self.resources.acquire()
+                problems = self.system.after_pause()
+                if problems:
+                    self.resources.release()
+                    return 503, self._not_enough(problems)
                 self.process = subprocess.Popen(
                     command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=self.project.root
                 )
@@ -147,9 +161,31 @@ class Service:
                 return 503, {"error": "could not prepare training resources"}
             finally:
                 log.close()
+            self.resource_warning = ""
             self.watcher = threading.Thread(target=self._finished, args=(self.process,), daemon=True)
             self.watcher.start()
+            threading.Thread(target=self._watch_resources, args=(self.process,), daemon=True).start()
         return 202, {"started": profile_id}
+
+    def _not_enough(self, problems: list[str], record: bool = True) -> dict:
+        if record:
+            message = "Not enough free system resources: " + "; ".join(problems)
+            State(self.project).update(state="failed", ended_at=now(), last_error=message)
+        return {"error": "not enough free system resources: " + "; ".join(problems), "problems": problems}
+
+    def _watch_resources(self, process: subprocess.Popen, interval: float = 30) -> None:
+        """A run that has to swap barely moves: say so in the status instead of looking stuck."""
+        while process.poll() is None:
+            problems = self.system.while_running()
+            warning = "; ".join(problems)
+            if warning and warning != self.resource_warning:
+                with self.project.path("service.log").open("a", encoding="utf-8") as log:
+                    log.write(f"Resource warning: {warning}\n")
+            self.resource_warning = warning
+            try:
+                process.wait(timeout=interval)
+            except subprocess.TimeoutExpired:
+                pass
 
     def _finished(self, process: subprocess.Popen) -> None:
         process.wait()
@@ -210,6 +246,7 @@ class Service:
             wake_word=self.project.config["wake_word"],
             slug=self.project.slug,
             gpu=gpu(),
+            resources={**self.system.snapshot(), "warning": self.resource_warning if self.running() else ""},
             profiles={key: value.get("label", key) for key, value in self.profiles.items()},
             speaker_routes=sorted(self.routes),
             extraction={
