@@ -14,6 +14,7 @@ import threading
 import urllib.parse
 from datetime import datetime, time, timedelta
 
+from .idle import PREFIX
 from .project import Project, ProjectError
 from .recordings import _get, read_token
 from .state import now, read
@@ -36,6 +37,10 @@ DEFAULTS = {
 def in_window(current: time, start: str, end: str) -> bool:
     first, last = time.fromisoformat(start), time.fromisoformat(end)
     return first <= current < last if first < last else current >= first or current < last
+
+
+class IdleProbeError(RuntimeError):
+    """The idle command failed; its message is the probe's own reason line."""
 
 
 class Scheduler:
@@ -71,7 +76,11 @@ class Scheduler:
         part.replace(self.path)
 
     def idle(self) -> float:
-        result = subprocess.run(self.config["idle_command"], capture_output=True, text=True, timeout=10, check=True)
+        result = subprocess.run(self.config["idle_command"], capture_output=True, text=True, timeout=10)
+        if result.returncode:
+            # Only the probe's own reason line is shown; other output stays private.
+            reasons = [line for line in result.stderr.splitlines() if line.startswith(PREFIX)]
+            raise IdleProbeError(reasons[-1] if reasons else f"idle command exited with {result.returncode}")
         value = float(result.stdout.strip())
         if not math.isfinite(value) or value < 0:
             raise ValueError("Invalid idle seconds")
@@ -178,7 +187,8 @@ class Scheduler:
                 self.tick()
             except Exception as err:
                 # Do not log responses, transcripts, credentials or probe output.
-                self.status.update(state="probe_failed", error=type(err).__name__)
+                error = str(err)[:200] if isinstance(err, IdleProbeError) else type(err).__name__
+                self.status.update(state="probe_failed", error=error)
                 if self.process is not None and self.process.poll() is None and self.service.process is self.process:
                     self.service.stop()
                     self.process = None

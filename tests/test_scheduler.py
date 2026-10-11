@@ -1,13 +1,14 @@
 """Night training respects user activity, changed data and cooldowns."""
 
 import json
+import sys
 from datetime import datetime, time, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from wake_word_trainer.project import Project
-from wake_word_trainer.scheduler import Scheduler, in_window
+from wake_word_trainer.scheduler import IdleProbeError, Scheduler, in_window
 from wake_word_trainer.state import State
 
 
@@ -83,3 +84,45 @@ def test_conditions_block_training(tmp_path, monkeypatch, reason):
         service.running = lambda: True
     s.tick(at)
     assert not calls
+
+
+def test_failed_idle_probe_reports_its_reason_only(tmp_path):
+    p = Project.create(tmp_path, "Hey Nova")
+    service = SimpleNamespace(project=p, profiles={"recommended": {}})
+    script = (
+        "import sys; print('secret', file=sys.stderr); "
+        "print('idle probe: no desktop display found', file=sys.stderr); sys.exit(1)"
+    )
+    s = Scheduler(service, {"enabled": True, "idle_command": [sys.executable, "-c", script]})
+    with pytest.raises(IdleProbeError, match=r"^idle probe: no desktop display found$"):
+        s.idle()
+    s.config["idle_command"] = [sys.executable, "-c", "import sys; print('secret', file=sys.stderr); sys.exit(3)"]
+    with pytest.raises(IdleProbeError, match="exited with 3"):
+        s.idle()
+
+
+def test_idle_probe_prefers_gnome_and_finds_session_bus(monkeypatch):
+    from wake_word_trainer import idle
+
+    monkeypatch.setattr(idle, "manager_environment", lambda: {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1/bus"})
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    monkeypatch.setattr(idle.shutil, "which", lambda name: "/usr/bin/gdbus" if name == "gdbus" else None)
+    seen = {}
+
+    def run(command, env):
+        seen["command"], seen["bus"] = command, env["DBUS_SESSION_BUS_ADDRESS"]
+        return "(uint64 1234567,)\n"
+
+    monkeypatch.setattr(idle, "_run", run)
+    assert idle.seconds() == 1234.567
+    assert seen["bus"] == "unix:path=/run/user/1/bus" and "org.gnome.Mutter.IdleMonitor.GetIdletime" in seen["command"]
+    assert idle.mutter({"DBUS_SESSION_BUS_ADDRESS": "x"}) == 1234.567
+
+
+def test_idle_probe_never_uses_xwayland(monkeypatch, capsys):
+    from wake_word_trainer import idle
+
+    monkeypatch.setattr(idle, "environment", lambda: {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"})
+    monkeypatch.setattr(idle, "mutter", lambda env: None)
+    assert idle.main() == 1
+    assert capsys.readouterr().err.startswith("idle probe: Wayland session")

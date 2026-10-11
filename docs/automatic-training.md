@@ -17,11 +17,16 @@ automatic_training:
   check_seconds: 30
 ```
 
-`wake_word_trainer.idle` measures the X11 screensaver's input inactivity using
-libX11/libXss; the service needs its desktop's `DISPLAY`, `XAUTHORITY` and
-`XDG_SESSION_TYPE=x11`. On other desktops configure a command that prints
-idle **seconds**, not a constant. An unavailable or invalid probe blocks the
-automatic run. GPU use and CPU load are checked before starting; use
+`wake_word_trainer.idle` asks GNOME's idle monitor over the session D-Bus
+(X11 and Wayland) and otherwise measures the X11 screensaver's input
+inactivity using libX11/libXss (Cinnamon, MATE, Xfce, KDE on X11). A systemd
+user service does not inherit `DISPLAY` and `XAUTHORITY` from the desktop; the
+probe takes them from the systemd user manager, `/tmp/.X11-unix` and
+`~/.Xauthority`. A Wayland session never falls back to XWayland, which does
+not see native input. On other desktops configure a command that prints idle
+**seconds**, not a constant. An unavailable or invalid probe blocks the
+automatic run; `/v1/status.automatic_training.error` then shows the probe's
+reason (`idle probe: …`). GPU use and CPU load are checked before starting; use
 `max_gpu_use_percent: null` for a CPU-only workstation.
 
 The first check establishes a baseline of collector sample hashes. New data
