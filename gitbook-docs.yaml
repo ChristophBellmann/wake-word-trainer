@@ -1,0 +1,11 @@
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+site:
+  title: Wake Word Trainer
+  structure:
+    - type: space
+      key: wake-word-trainer
+      title: Wake Word Trainer
+      path: docs
+      default: true
+      content:
+        directory: ./docs

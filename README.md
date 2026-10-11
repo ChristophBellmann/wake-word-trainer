@@ -20,6 +20,18 @@ directly through Piper’s ONNX API.
 
 [Deutsch weiter unten](#deutsch)
 
+The full documentation is in [docs/](docs/README.md) (also as a GitBook):
+[Installation](docs/installation.md) ·
+[Quick start](docs/quick-start.md) ·
+[Settings](docs/configuration.md) ·
+[Pipeline](docs/pipeline.md) ·
+[Evaluation](docs/evaluation.md) ·
+[Home Assistant service](docs/service.md) ·
+[Automatic deployment](docs/deployment.md) ·
+[Idle-night training](docs/automatic-training.md) ·
+[Command line](docs/cli.md) ·
+[HTTP API](docs/api.md)
+
 ## What it does
 
 | Step | |
@@ -318,6 +330,19 @@ pip install -e ".[train,dev]"
 pytest -m "not slow"   # seconds
 pytest -m slow         # trains a tiny model on synthetic data, about a minute
 ```
+
+## GitBook source and maintenance
+
+The project documentation is published as a GitBook through GitSync from
+`ChristophBellmann/wake-word-trainer` on `main`. Page sources live in
+[`docs/`](docs/README.md), with navigation in
+[`docs/SUMMARY.md`](docs/SUMMARY.md). `.gitbook.yaml` and
+`gitbook-docs.yaml` point to the same content directory.
+
+Update the affected pages alongside changes to features, installation,
+configuration, the HTTP API or verification results. Add new pages to
+`SUMMARY.md`, commit and push to `main`, then verify the published GitBook:
+synchronization is asynchronous.
 
 ## License
 
