@@ -24,6 +24,7 @@ import numpy as np
 from . import audio
 from .features import STEP_MS
 from .project import Project, ProjectError
+from .recordings import LOCAL
 
 STRIDE = 3
 SLICE_SECONDS = STRIDE * STEP_MS / 1000
@@ -49,6 +50,9 @@ class Report:
     own_negatives: int = 0
     own_negatives_triggered: int | None = None
     triggered_by: list[str] = field(default_factory=list)
+    # The part of them recorded by the satellites (Collector), i.e. real false activations at home.
+    satellite_negatives: int = 0
+    satellite_negatives_triggered: int | None = None
 
     def summary(self) -> str:
         if self.probability_cutoff is None:
@@ -63,6 +67,8 @@ class Report:
         )
         if self.own_negatives:
             text += f"; {self.own_negatives_triggered} of {self.own_negatives} own non-wake-word recordings trigger"
+        if self.satellite_negatives:
+            text += f" ({self.satellite_negatives_triggered} of {self.satellite_negatives} from the satellites)"
         return text
 
 
@@ -229,6 +235,7 @@ def report(project: Project, m: Measurement, index: int | None, budget: float) -
             for i in range(0, 256, 5)
         ],
         own_negatives=len(m.negatives),
+        satellite_negatives=sum(path.parent.name != LOCAL for path in m.negatives),
     )
     if index is not None:
         cutoff = CUTOFFS[index]
@@ -236,6 +243,10 @@ def report(project: Project, m: Measurement, index: int | None, budget: float) -
         if m.negatives:
             result.own_negatives_triggered = m.triggered(index)
             result.triggered_by = [rel(p) for p, s in zip(m.negatives, m.negative_peaks, strict=True) if s > cutoff]
+            result.satellite_negatives_triggered = sum(
+                path.parent.name != LOCAL and score > cutoff
+                for path, score in zip(m.negatives, m.negative_peaks, strict=True)
+            )
     return result
 
 

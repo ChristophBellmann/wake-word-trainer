@@ -9,7 +9,8 @@ int8, sliding window of `evaluation.sliding_window_size` frames):
 - **False activations per hour** on hours of background audio (speech,
   music, dinner-party noise).
 - **Own negatives**: how many of your held-out recordings without the wake
-  word trigger it.
+  word trigger it. Recordings from the satellites (collector) are also counted
+  on their own: `satellite_negatives`, `satellite_negatives_triggered`.
 
 for all 256 possible cutoffs.
 

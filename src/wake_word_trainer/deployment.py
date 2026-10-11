@@ -45,6 +45,10 @@ def decision(candidate: dict, reference: dict, settings: dict) -> tuple[bool, st
         return False, "Own negative budget exceeded"
     if recall < old_recall or triggered > old_triggered:
         return False, "Regression against the deployed model"
+    satellite = candidate.get("satellite_negatives_triggered")
+    old_satellite = reference.get("satellite_negatives_triggered")
+    if satellite is not None and old_satellite is not None and satellite > old_satellite:
+        return False, "More satellite false activations than the deployed model"
     if recall <= old_recall and triggered >= old_triggered:
         return False, "No measured improvement"
     return True, "Improved against the deployed model within the false activation budget"

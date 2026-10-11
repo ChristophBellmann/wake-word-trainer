@@ -19,6 +19,7 @@ import numpy as np
 
 from . import audio
 from .project import Project, ProjectError
+from .recordings import LOCAL
 
 STEP_MS = 10
 AUGMENTED_SECONDS = 3.2
@@ -127,6 +128,9 @@ def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]
     own_eval = audio.wavs(recordings / "eval")
     own_hard = audio.wavs(recordings / "hard")
     negative_train = audio.wavs(recordings / "negative" / "train")
+    # Collector clips sit in device folders, local folders under "local".
+    satellite_train = [path for path in negative_train if path.parent.name != LOCAL]
+    negative_train = [path for path in negative_train if path.parent.name == LOCAL]
     negative_eval = audio.wavs(recordings / "negative" / "eval")
     tts_pos = audio.wavs(project.path("tts", "positive"))
     tts_neg = audio.wavs(project.path("tts", "negative"))
@@ -154,6 +158,7 @@ def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]
     make("own", "training", own_train, repeat, 10)
     make("own_hard", "training", own_hard, repeat, 10)
     make("own_negative", "training", negative_train, max(1, repeat // 2), 1, random_window=True)
+    make("satellite_negative", "training", satellite_train, max(1, repeat // 2), 1, random_window=True)
     make("own_negative", "validation", negative_eval, 1, 1, random_window=True)
     make("own_negative", "testing", negative_eval, 1, 1, random_window=True)
     make("speech_extra", "training", speech_clips(project, downloads), 1, 1, random_window=True)

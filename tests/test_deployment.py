@@ -87,3 +87,14 @@ def test_assess_and_deploy(tmp_path: Path, monkeypatch):
     assert marker.read_text() == digest(model)
     assert reference.read_bytes() == b"new"
     assert json.loads(project.path("deployment.json").read_text())["state"] == "completed"
+
+
+def test_more_satellite_false_activations_block_deployment():
+    new = {**metrics(triggered=1), "satellite_negatives_triggered": 1}
+    old = {**metrics(triggered=2), "satellite_negatives_triggered": 0}
+    assert decision(new, old, {"max_false_accepts_per_hour": 0.5, "max_own_negative_share": 0.05}) == (
+        False,
+        "More satellite false activations than the deployed model",
+    )
+    old["satellite_negatives_triggered"] = 1
+    assert decision(new, old, {"max_false_accepts_per_hour": 0.5, "max_own_negative_share": 0.05})[0]

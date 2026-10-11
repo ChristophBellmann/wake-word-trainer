@@ -48,6 +48,9 @@ class FetchResult:
         return text
 
 
+LOCAL = "local"  # device folder of recordings from local folders; Collector clips use device names
+
+
 def split_for(digest: str, eval_share: float) -> str:
     """Stable assignment: the same content always lands on the same side."""
     bucket = int(digest[:8], 16) / 0xFFFFFFFF
@@ -115,7 +118,7 @@ def local_clips(project: Project, setting: str = "folders") -> list[tuple[str, s
             raise ProjectError(f"Recording folder missing: {root}")
         for path in audio.wavs(root):
             data = path.read_bytes()
-            clips.append(("local", f"local_{_sha256(data)[:12]}.wav", data))
+            clips.append((LOCAL, f"local_{_sha256(data)[:12]}.wav", data))
     return clips
 
 

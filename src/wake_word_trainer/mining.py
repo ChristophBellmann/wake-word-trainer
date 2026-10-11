@@ -20,7 +20,7 @@ from .project import Project
 
 Log = Callable[[str], None]
 NEGATIVE_SETS = ("speech", "dinner_party", "no_speech")
-OWN_NEGATIVE_SETS = ("own_negative", "speech_extra", "tts_negative")
+OWN_NEGATIVE_SETS = ("own_negative", "satellite_negative", "speech_extra", "tts_negative")
 
 
 def sources(project: Project, downloads: Path) -> list[Path]:

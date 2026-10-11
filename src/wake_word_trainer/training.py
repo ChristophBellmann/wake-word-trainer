@@ -54,12 +54,14 @@ def feature_sets(project: Project, downloads: Path) -> list[dict]:
         ("own_hard", True, "truncate_start"),
         ("tts", True, "truncate_start"),
         ("own_negative", False, "random"),
+        ("satellite_negative", False, "random"),
         ("speech_extra", False, "random"),
         ("mined", False, "random"),
         ("tts_negative", False, "random"),
     ):
         if (project.features / name).is_dir():
-            sets.append(_feature_set(project.features / name, weights[name], truth, strategy))
+            weight = weights.get(name, weights["own_negative"])
+            sets.append(_feature_set(project.features / name, weight, truth, strategy))
     negatives = downloads / "negative_datasets"
     for name in ("speech", "dinner_party", "no_speech"):
         if (negatives / name).is_dir():

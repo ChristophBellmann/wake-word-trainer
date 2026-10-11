@@ -22,6 +22,20 @@ words that sound alike — are the strongest lever against false activations:
 A held-out share also limits the cutoff (`max_own_negative_share`), and the
 report lists the ones that still trigger.
 
+Clips from the collector (real false activations of your satellites) get
+their own training set `satellite_negative` with its own sampling weight
+(default 4.0), separate from local negative folders (`own_negative`). In
+training every set is drawn with a fixed share, independent of how many clips
+it holds; without the split, a large local folder of negatives would dilute
+the few recordings from your satellites. The report counts them separately:
+
+```text
+… 3 of 317 own non-wake-word recordings trigger (0 of 12 from the satellites)
+```
+
+Automatic deployment refuses a model that triggers on more of these
+satellite recordings than the deployed one.
+
 ## Speech in your language
 
 The microWakeWord negative sets are mostly English.

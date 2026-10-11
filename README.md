@@ -193,7 +193,7 @@ training:
   positive_class_weight: 1.0
   negative_class_weight: 20.0
   own_repeat: 8               # augmented copies of each own recording
-  weights: {own: 3.0, own_hard: 1.5, own_negative: 4.0, speech_extra: 5.0, mined: 4.0,
+  weights: {own: 3.0, own_hard: 1.5, own_negative: 4.0, satellite_negative: 4.0, speech_extra: 5.0, mined: 4.0,
             tts: 2.0, tts_negative: 3.0, speech: 10.0, dinner_party: 10.0, no_speech: 5.0}
   clip_duration_ms: 1500
   eval_step_interval: 500
@@ -443,7 +443,8 @@ Use the Collector's public `model_update.py` with `require_parity: true` and
 The pipeline evaluates the new export and deployed reference on the same
 held-out own recordings and background audio. It compares both at their
 manifest thresholds. Automatic deployment requires no regression in recall or
-own negative triggers, an improvement in at least one of them, and compliance
+own negative triggers (also none among the satellites' own false activations),
+an improvement in at least one of them, and compliance
 with the configured false activation budgets. Synthetic-only evaluation cannot
 approve automatic OTA. The report includes a comparison bound to both model
 SHA256 values before Home Assistant receives completion.

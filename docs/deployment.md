@@ -22,7 +22,8 @@ Use the Collector's public `model_update.py` with `require_parity: true` and
 The pipeline evaluates the new export and deployed reference on the same
 held-out own recordings and background audio. It compares both at their
 manifest thresholds. Automatic deployment requires no regression in recall or
-own negative triggers, an improvement in at least one of them, and compliance
+own negative triggers (also none among the satellites' own false activations),
+an improvement in at least one of them, and compliance
 with the configured false activation budgets. Synthetic-only evaluation cannot
 approve automatic OTA. The report includes a comparison bound to both model
 SHA256 values before Home Assistant receives completion.

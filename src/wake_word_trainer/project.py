@@ -78,6 +78,9 @@ DEFAULTS: dict[str, Any] = {
             "own": 3.0,
             "own_hard": 1.5,
             "own_negative": 4.0,
+            # Recordings without the wake word from the Collector (satellite false
+            # activations): own share, so a large local negative folder cannot dilute them.
+            "satellite_negative": 4.0,
             "speech_extra": 5.0,
             "mined": 4.0,
             "tts": 2.0,
