@@ -20,7 +20,7 @@ directly through Piper’s ONNX API.
 
 [Deutsch weiter unten](#deutsch)
 
-The full documentation is in [docs/](docs/README.md) (also as a GitBook):
+The full documentation is in [docs/](docs/README.md) (also as a [GitBook](https://renewable-energy-design.gitbook.io/wake-word-trainer/)):
 [Installation](docs/installation.md) ·
 [Quick start](docs/quick-start.md) ·
 [Settings](docs/configuration.md) ·
@@ -333,7 +333,7 @@ pytest -m slow         # trains a tiny model on synthetic data, about a minute
 
 ## GitBook source and maintenance
 
-The project documentation is published as a GitBook through GitSync from
+The [project documentation](https://renewable-energy-design.gitbook.io/wake-word-trainer/) is published as a GitBook through GitSync from
 `ChristophBellmann/wake-word-trainer` on `main`. Page sources live in
 [`docs/`](docs/README.md), with navigation in
 [`docs/SUMMARY.md`](docs/SUMMARY.md). `.gitbook.yaml` and
