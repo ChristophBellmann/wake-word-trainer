@@ -185,6 +185,7 @@ class Scheduler:
         while not self.stop_event.wait(float(self.config["check_seconds"])):
             try:
                 self.tick()
+                self.status.pop("error", None)
             except Exception as err:
                 # Do not log responses, transcripts, credentials or probe output.
                 error = str(err)[:200] if isinstance(err, IdleProbeError) else type(err).__name__

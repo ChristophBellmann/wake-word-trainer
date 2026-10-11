@@ -126,3 +126,13 @@ def test_idle_probe_never_uses_xwayland(monkeypatch, capsys):
     monkeypatch.setattr(idle, "mutter", lambda env: None)
     assert idle.main() == 1
     assert capsys.readouterr().err.startswith("idle probe: Wayland session")
+
+
+def test_error_clears_after_a_good_check(tmp_path, monkeypatch):
+    s, _service, _calls = setup_scheduler(tmp_path, monkeypatch)
+    s.status["error"] = "idle probe: old"
+    checks = iter([False, True])
+    monkeypatch.setattr(s.stop_event, "wait", lambda _seconds: next(checks))
+    monkeypatch.setattr(s, "tick", lambda: None)
+    s._loop()
+    assert "error" not in s.status
