@@ -121,7 +121,8 @@ WAV-Sprach-/Hintergrundkorpora einbeziehen:
 
 ```bash
 wake-word-trainer -p comparison teacher train --device gpu --epochs 40 \
-  --include-corpus --negative-limit 6000 --initial-model teacher/legacy.pt
+  --include-corpus --negative-limit 6000 --balanced-sources \
+  --initial-model teacher/legacy.pt
 ```
 
 `--initial-model` ist optional und verlangt identische Log-Mel-Parameter.
@@ -131,6 +132,17 @@ aus dem Teacher-Optimierer. Positive TTS beachten den Dauerfilter; lange
 Trainingsnegative liefern ein reproduzierbares zufälliges Fenster. Eigene
 Bewertungsaufnahmen bestimmen weiter den besten Checkpoint. Quellen und
 Anzahlen stehen privat in `teacher/training-sources.json` und im Checkpoint.
+
+`--balanced-sources` verwendet die Quellanteile aus `training.weights` auch
+beim Teacher. Damit verdrängen große Korpora weder eigene Positive noch die
+wenigen bestätigten Satelliten-Negative. Die Klassengewichtung berücksichtigt
+die tatsächlich gesampelten positiven/negativen Anteile. Ohne diese Option
+zieht der Teacher gleichmäßig aus allen Trainingsclips; ein größeres Korpus
+verändert dann auch die Anteile. Beide Wege sind getrennt vergleichbar.
+
+Beim Scoring teilen überlappende Fenster ihre STFT-Berechnung. Alle bisherigen
+Fenster bleiben erhalten; ein nicht am Frame-Raster liegendes Schlussfenster
+wird gesondert berechnet. Die Parität ist auch für ungerade Cliplängen geprüft.
 
 Microfrontend-MMAPs bleiben ausgeschlossen. Audio-Augmentation und das
 vollständige alte Teacher-Regime werden damit noch nicht reproduziert. Der

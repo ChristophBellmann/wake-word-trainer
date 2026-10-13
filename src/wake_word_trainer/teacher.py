@@ -101,7 +101,15 @@ class Frontend:
         starts = list(range(0, last + 1, max(1, round(hop_seconds * self.params.sample_rate))))
         if starts[-1] != last:
             starts.append(last)
-        return np.stack([self.clip(samples[s : s + self.length]) for s in starts])
+        # Überlappende Fenster teilen dieselben STFT-Frames. Nur ein nicht am
+        # Frame-Raster liegendes Fenster braucht seine eigene Transformation.
+        full = self.clip(samples)
+        frame_count = 1 + (self.length - self.params.win_length) // self.params.hop_length
+        return np.stack([
+            full[:, s // self.params.hop_length : s // self.params.hop_length + frame_count]
+            if s % self.params.hop_length == 0 else self.clip(samples[s : s + self.length])
+            for s in starts
+        ])
 
 
 def save(path: Path, model, params: Parameters, **metadata) -> None:
@@ -231,20 +239,56 @@ def training_sources(project: Project, include_corpus: bool = False, negative_li
     return result
 
 
+def source_balance(project: Project, sources: dict) -> tuple[np.ndarray, float, dict]:
+    """Fester Anteil pro Quelle statt Verdünnung eigener Mikrofonaufnahmen."""
+    from collections import Counter
+
+    from .recordings import LOCAL
+
+    paths = sources["train_positive"] + sources["train_negative"]
+    groups = []
+    speech = [project.resolve(p).resolve() for p in project.config["negatives"]["speech_folders"]]
+    for index, path in enumerate(paths):
+        positive = index < len(sources["train_positive"])
+        if path.is_relative_to(project.path("tts")):
+            group = "tts" if positive else "tts_negative"
+        elif path.is_relative_to(project.recordings):
+            if positive:
+                group = "own_hard" if path.is_relative_to(project.recordings / "hard") else "own"
+            else:
+                group = "own_negative" if path.parent.name == LOCAL else "satellite_negative"
+        else:
+            group = (
+                "speech_extra" if any(path.resolve().is_relative_to(folder) for folder in speech)
+                else "background_negative"
+            )
+        groups.append(group)
+    counts = Counter(groups)
+    configured = project.config["training"]["weights"]
+    weights = np.array([float(configured[g]) / counts[g] for g in groups], dtype=np.float64)
+    positive_mass = weights[:len(sources["train_positive"])].sum()
+    negative_mass = weights[len(sources["train_positive"]):].sum()
+    if positive_mass <= 0 or negative_mass <= 0:
+        raise ProjectError("Teacher-Sampling benötigt positive und negative Quellgewichte")
+    return weights, float(negative_mass / positive_mass), dict(counts)
+
+
 def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int = 1337, device: str = "auto",
-          include_corpus: bool = False, negative_limit: int = 6000, initial_model: Path | None = None) -> Path:
+          include_corpus: bool = False, negative_limit: int = 6000, initial_model: Path | None = None,
+          balanced_sources: bool = False) -> Path:
     guard = lease("teacher-training") if device != "cpu" else contextlib.nullcontext()
     with guard:
         return _train(
-            project, epochs, batch_size, seed, torch_device(device), include_corpus, negative_limit, initial_model
+            project, epochs, batch_size, seed, torch_device(device), include_corpus, negative_limit, initial_model,
+            balanced_sources
         )
 
 
 def _train(project: Project, epochs: int, batch_size: int, seed: int, device, include_corpus: bool = False,
-           negative_limit: int = 6000, initial_model: Path | None = None) -> Path:
+           negative_limit: int = 6000, initial_model: Path | None = None, balanced_sources: bool = False) -> Path:
     """Geprüfte Labels; Holdouts bleiben aus dem Optimierer. GPU ausdrücklich wählbar."""
     import torch
-    from torch.utils.data import DataLoader, TensorDataset
+    from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 
     torch.set_num_threads(4)
     torch.manual_seed(seed)
@@ -287,6 +331,11 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
 
     training, ratio = dataset("train")
     validation, _ = dataset("eval")
+    sampler, group_counts = None, {}
+    if balanced_sources:
+        weights, ratio, group_counts = source_balance(project, sources)
+        sampler = WeightedRandomSampler(weights, len(training), replacement=True,
+                                        generator=torch.Generator().manual_seed(seed))
     source_report = {role: [str(p) for p in paths] for role, paths in sources.items()}
     project.path("teacher").mkdir(parents=True, exist_ok=True)
     project.path("teacher", "training-sources.json").write_text(json.dumps(source_report, indent=2))
@@ -298,7 +347,7 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
     for epoch in range(epochs):
         model.train()
         for features, labels in DataLoader(
-            training, batch_size=batch_size, shuffle=True, pin_memory=device.type == "cuda"
+            training, batch_size=batch_size, shuffle=sampler is None, sampler=sampler, pin_memory=device.type == "cuda"
         ):
             features, labels = features.to(device, non_blocking=True), labels.to(device, non_blocking=True)
             optimizer.zero_grad()
@@ -317,6 +366,7 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
             best, stale = loss, 0
             save(target, model, frontend.params, seed=seed, history=history, training_device=str(device),
                  source_counts={role: len(paths) for role, paths in sources.items()}, include_corpus=include_corpus,
+                 balanced_sources=balanced_sources, group_counts=group_counts,
                  initial_sha256=hashlib.sha256(initial_model.read_bytes()).hexdigest() if initial_model else None)
         else:
             stale += 1

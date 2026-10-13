@@ -8,7 +8,16 @@ import yaml
 
 from wake_word_trainer import audio
 from wake_word_trainer.project import Project, ProjectError
-from wake_word_trainer.teacher import Frontend, Parameters, Teacher, import_checkpoint, network, train, training_sources
+from wake_word_trainer.teacher import (
+    Frontend,
+    Parameters,
+    Teacher,
+    import_checkpoint,
+    network,
+    source_balance,
+    train,
+    training_sources,
+)
 
 torch = pytest.importorskip("torch")
 
@@ -50,8 +59,9 @@ def test_tiny_training_and_scoring_with_stable_eval_split(tmp_path):
             samples[: index + (1 if split == "eval" else 3)] = 0
             audio.write(project.recordings / split / "room" / f"p{index}.wav", samples)
             audio.write(project.recordings / "negative" / split / "room" / f"n{index}.wav", samples * 0.01)
-    checkpoint = train(project, epochs=1, batch_size=2, device="cpu")
+    checkpoint = train(project, epochs=1, batch_size=2, device="cpu", balanced_sources=True)
     assert checkpoint.is_file()
+    assert torch.load(checkpoint, weights_only=True)["balanced_sources"] is True
     assert 0 <= Teacher(checkpoint, device="cpu")(np.ones(24000, np.float32) * 0.1)["peak"] <= 1
     assert len(json.loads(project.path("teacher", "training.json").read_text())) == 1
 
@@ -113,3 +123,31 @@ def test_corpus_teacher_checks_tts_against_own_eval_before_training(tmp_path):
     audio.write(project.recordings / "eval" / "room" / "same.wav", samples)
     with pytest.raises(ProjectError, match="Training/Bewertung"):
         training_sources(project, True)
+
+
+@pytest.mark.parametrize("length,hop", [(9000, 0.1), (48371, 0.1), (48777, 0.105)])
+def test_shared_stft_keeps_all_original_teacher_windows(length, hop):
+    frontend = Frontend(Parameters())
+    samples = np.random.default_rng(7).normal(0, 0.05, length).astype(np.float32)
+    padded = np.pad(samples, (0, max(0, frontend.length - len(samples))))
+    last = len(padded) - frontend.length
+    starts = list(range(0, last + 1, max(1, round(hop * audio.RATE))))
+    if starts[-1] != last:
+        starts.append(last)
+    expected = np.stack([frontend.clip(padded[s:s + frontend.length]) for s in starts])
+    actual = frontend.windows(samples, hop)
+    np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=2e-6)
+
+
+def test_large_corpus_cannot_dilute_satellite_examples_with_source_balancing(tmp_path):
+    p = Project.create(tmp_path / "p", "Hey Nova")
+    for size in (10, 1000):
+        sources = {
+            "train_positive": [p.recordings / "train" / "satellite" / "p.wav"],
+            "train_negative": [p.recordings / "negative" / "train" / "satellite" / "n.wav"]
+                              + [p.path("tts", "negative", f"{i}.wav") for i in range(size)],
+        }
+        weights, ratio, groups = source_balance(p, sources)
+        assert weights[1] / weights[1:].sum() == pytest.approx(4 / 7)
+        assert weights[0] * ratio == pytest.approx(weights[1:].sum())
+        assert groups["satellite_negative"] == 1
