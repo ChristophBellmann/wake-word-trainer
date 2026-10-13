@@ -146,6 +146,13 @@ Beim Scoring teilen überlappende Fenster ihre STFT-Berechnung. Alle bisherigen
 Fenster bleiben erhalten; ein nicht am Frame-Raster liegendes Schlussfenster
 wird gesondert berechnet. Die Parität ist auch für ungerade Cliplängen geprüft.
 
+Ein zusätzlicher Architekturvergleich ist mit `--architecture temporal_v1`
+möglich. Dieser Teacher verwendet Zeitfilter mit verschiedenen Abständen und
+größerem zusammenhängendem Kontext. `legacy_v2` bleibt Standard und hält die
+alten Checkpoints kompatibel. Die Architektur steht im portablen Checkpoint;
+ein Warmstart muss dieselbe Architektur verwenden. Auch der neue Teacher nutzt
+ausschließlich Log-Mel-Features und benötigt einen eigenen Qualitätsvergleich.
+
 Microfrontend-MMAPs bleiben ausgeschlossen. Audio-Augmentation und das
 vollständige alte Teacher-Regime werden damit noch nicht reproduziert. Der
 Lauf aktiviert weder Teacher-Loss im Student noch Rollout. Erst der Vergleich

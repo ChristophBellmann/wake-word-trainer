@@ -52,7 +52,8 @@ def test_cannot_import_teacher_with_mixed_microfrontend_negatives(tmp_path):
         import_checkpoint(tmp_path / "absent.pt", config, tmp_path / "result.pt")
 
 
-def test_tiny_training_and_scoring_with_stable_eval_split(tmp_path):
+@pytest.mark.parametrize("architecture", ["legacy_v2", "temporal_v1"])
+def test_tiny_training_and_scoring_with_stable_eval_split(tmp_path, architecture):
     project = Project.create(tmp_path / "project", "Hey Nova", "de")
     for split in ("train", "eval"):
         for index in range(2):
@@ -60,9 +61,10 @@ def test_tiny_training_and_scoring_with_stable_eval_split(tmp_path):
             samples[: index + (1 if split == "eval" else 3)] = 0
             audio.write(project.recordings / split / "room" / f"p{index}.wav", samples)
             audio.write(project.recordings / "negative" / split / "room" / f"n{index}.wav", samples * 0.01)
-    checkpoint = train(project, epochs=1, batch_size=2, device="cpu", balanced_sources=True)
+    checkpoint = train(project, epochs=1, batch_size=2, device="cpu", balanced_sources=True, architecture=architecture)
     assert checkpoint.is_file()
     assert torch.load(checkpoint, weights_only=True)["balanced_sources"] is True
+    assert Teacher(checkpoint, device="cpu").metadata["architecture"] == architecture
     assert 0 <= Teacher(checkpoint, device="cpu")(np.ones(24000, np.float32) * 0.1)["peak"] <= 1
     assert len(json.loads(project.path("teacher", "training.json").read_text())) == 1
 

@@ -29,8 +29,36 @@ class Parameters:
     fmax: float = 7600.0
 
 
-def network(dropout: float = 0.2):
+def network(dropout: float = 0.2, architecture: str = "legacy_v2"):
+    import torch
     import torch.nn as nn
+
+    if architecture == "temporal_v1":
+        class Block(nn.Module):
+            def __init__(self, dilation):
+                super().__init__()
+                self.layers = nn.Sequential(
+                    nn.Conv1d(64, 64, 7, padding=3 * dilation, dilation=dilation, groups=64),
+                    nn.GroupNorm(8, 64), nn.SiLU(), nn.Conv1d(64, 64, 1),
+                )
+
+            def forward(self, x):
+                return x + self.layers(x)
+
+        class Temporal(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.stem = nn.Sequential(nn.Conv1d(40, 64, 5, padding=2), nn.GroupNorm(8, 64), nn.SiLU())
+                self.blocks = nn.Sequential(*(Block(d) for d in (1, 2, 4, 8)))
+                self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(128, 1))
+
+            def forward(self, samples):
+                x = self.blocks(self.stem(samples.squeeze(1)))
+                return self.head(torch.cat((x.mean(-1), x.amax(-1)), dim=1))
+
+        return Temporal()
+    if architecture != "legacy_v2":
+        raise ProjectError("Unbekannte Teacher-Architektur")
 
     # Zustandsnamen und Architektur des reparierten Log-Mel-v2-Teachers.
     class Net(nn.Module):
@@ -156,7 +184,10 @@ class Teacher:
         if checkpoint.get("format") != FORMAT or checkpoint.get("feature_space") != "logmel":
             raise ProjectError("Kein portabler Log-Mel-Teacher; zuerst teacher import mit der Original-Konfiguration")
         self.frontend = Frontend(Parameters(**checkpoint["features"]))
-        self.model = network()
+        architecture = checkpoint.get("architecture", "legacy_v2")
+        if architecture == "temporal_v1" and self.frontend.params.n_mels != 40:
+            raise ProjectError("Temporal-Teacher benötigt 40 Mel-Bänder")
+        self.model = network(architecture=architecture)
         self.model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         guard = lease("teacher-initialize") if device != "cpu" else contextlib.nullcontext()
         with guard:
@@ -168,6 +199,7 @@ class Teacher:
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "feature_space": "logmel",
             "device": str(self.device),
+            "architecture": architecture,
         }
 
     def __call__(self, samples: np.ndarray) -> dict:
@@ -289,17 +321,18 @@ def training_window(project: Project, path: Path, samples: np.ndarray, length: i
 
 def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int = 1337, device: str = "auto",
           include_corpus: bool = False, negative_limit: int = 6000, initial_model: Path | None = None,
-          balanced_sources: bool = False) -> Path:
+          balanced_sources: bool = False, architecture: str = "legacy_v2") -> Path:
     guard = lease("teacher-training") if device != "cpu" else contextlib.nullcontext()
     with guard:
         return _train(
             project, epochs, batch_size, seed, torch_device(device), include_corpus, negative_limit, initial_model,
-            balanced_sources
+            balanced_sources, architecture
         )
 
 
 def _train(project: Project, epochs: int, batch_size: int, seed: int, device, include_corpus: bool = False,
-           negative_limit: int = 6000, initial_model: Path | None = None, balanced_sources: bool = False) -> Path:
+           negative_limit: int = 6000, initial_model: Path | None = None, balanced_sources: bool = False,
+           architecture: str = "legacy_v2") -> Path:
     """Geprüfte Labels; Holdouts bleiben aus dem Optimierer. GPU ausdrücklich wählbar."""
     import torch
     from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
@@ -307,12 +340,13 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
     torch.set_num_threads(4)
     torch.manual_seed(seed)
     frontend = Frontend(Parameters())
-    model = network(0.25).to(device)
+    model = network(0.25, architecture).to(device)
     sources = training_sources(project, include_corpus, negative_limit)
     if initial_model is not None:
         checkpoint = torch.load(initial_model, map_location="cpu", weights_only=True)
         if (checkpoint.get("format") != FORMAT or checkpoint.get("feature_space") != "logmel"
-                or checkpoint.get("features") != asdict(frontend.params)):
+                or checkpoint.get("features") != asdict(frontend.params)
+                or checkpoint.get("architecture", "legacy_v2") != architecture):
             raise ProjectError("Initialer Teacher hat inkompatible Log-Mel-Parameter")
         model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     print(f"Teacher training device: {device}", flush=True)
@@ -373,6 +407,7 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
             save(target, model, frontend.params, seed=seed, history=history, training_device=str(device),
                  source_counts={role: len(paths) for role, paths in sources.items()}, include_corpus=include_corpus,
                  balanced_sources=balanced_sources, group_counts=group_counts,
+                 architecture=architecture, negative_window_policy="owned_tail_external_random_v1",
                  initial_sha256=hashlib.sha256(initial_model.read_bytes()).hexdigest() if initial_model else None)
         else:
             stale += 1

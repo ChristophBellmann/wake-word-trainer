@@ -161,7 +161,7 @@ def cmd_teacher(args: argparse.Namespace) -> None:
         checkpoint = train(project, args.epochs, args.batch_size, args.seed, device=args.device,
                            include_corpus=args.include_corpus, negative_limit=args.negative_limit,
                            initial_model=project.resolve(args.initial_model) if args.initial_model else None,
-                           balanced_sources=args.balanced_sources)
+                           balanced_sources=args.balanced_sources, architecture=args.architecture)
         print(f"Teacher gespeichert: {checkpoint}")
     else:
         from . import audio
@@ -440,6 +440,7 @@ def parser() -> argparse.ArgumentParser:
     teacher_train.add_argument("--negative-limit", type=int, default=6000, help="Maximalzahl je externem Negativkorpus")
     teacher_train.add_argument("--initial-model", help="Kompatiblen portablen Log-Mel-Teacher weitertrainieren")
     teacher_train.add_argument("--balanced-sources", action="store_true", help="Feste Quellanteile wie beim Student")
+    teacher_train.add_argument("--architecture", choices=["legacy_v2", "temporal_v1"], default="legacy_v2")
     teacher_score = teacher_sub.add_parser("score")
     teacher_score.add_argument("--model", default="teacher/model.pt")
     teacher_score.add_argument("--folder", action="append", default=[])
