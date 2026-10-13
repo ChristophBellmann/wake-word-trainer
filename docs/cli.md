@@ -12,6 +12,7 @@ wake-word-trainer [-p PROJECT] [--downloads FOLDER] <command> [options]
 | `init "<wake word>"` | create `wakeword.yaml`; `--language`, `--collector-url`, `--token-file` |
 | `download` | shared data and Piper voices: `--voice <name>` (repeatable), `--speech <preset>` (e.g. `mls_de`), `--data` with them also the shared data |
 | `fetch` | own recordings from the collector and `recordings.folders` |
+| `audit` | [Datenprüfung](data-audit.md): lokale STT, optionale `--model`-Bewertung, zusätzliche `--positive-folder`, `--negative-folder`, `--unlabelled-folder`; keine Labeländerung |
 | `generate` | synthetic speech with Piper; `--force` regenerates |
 | `features` | augmented spectrograms |
 | `train` | train the model; `--restart` ignores the last checkpoint |

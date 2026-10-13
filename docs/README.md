@@ -20,6 +20,8 @@ ONNX API.
 
 ## The way through
 
+Vor dem Nachtraining: [Positive, Negative und Fehlaktivierungen prüfen](data-audit.md).
+
 1. [Install](installation.md) the trainer on a computer with a GPU.
 2. Follow the [quick start](quick-start.md): create a project, download
    voices and data, `run`.

@@ -13,6 +13,7 @@
 * [The pipeline step by step](pipeline.md)
 * [Evaluation and the cutoff](evaluation.md)
 * [Better models: more data, fewer false activations](better-models.md)
+* [Positive, Negative und Fehlaktivierungen prüfen](data-audit.md)
 * [Replacing a model you already use](replacing-a-model.md)
 
 ## Home Assistant

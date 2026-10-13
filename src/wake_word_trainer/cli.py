@@ -54,6 +54,30 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         print("Hint: fewer than 5 held-out recordings make the evaluation unreliable; record more.")
 
 
+def cmd_audit(args: argparse.Namespace) -> None:
+    from .audit import run
+
+    project = Project.load(args.project)
+    extra = [
+        (label, project.resolve(folder))
+        for label in ("positive", "negative", "unlabelled")
+        for folder in getattr(args, label + "_folder")
+    ]
+    result = run(
+        project,
+        extra,
+        project.resolve(args.output),
+        args.stt_model,
+        [project.resolve(path) for path in args.model],
+        args.phrase,
+        args.threads,
+    )
+    print(f"{result['unique_clips']} Aufnahmen geprüft; Labels unverändert. Bericht: {project.resolve(args.output)}")
+    print(json.dumps(result["findings"], ensure_ascii=False))
+    if result["findings"].get("processing_error"):
+        raise ProjectError("Einzelne Aufnahmen konnten nicht geprüft werden; Details stehen im privaten Bericht")
+
+
 def cmd_generate(args: argparse.Namespace) -> None:
     from .tts import generate
 
@@ -213,6 +237,7 @@ COMMANDS = {
     "init": cmd_init,
     "download": cmd_download,
     "fetch": cmd_fetch,
+    "audit": cmd_audit,
     "generate": cmd_generate,
     "features": cmd_features,
     "train": cmd_train,
@@ -248,6 +273,14 @@ def parser() -> argparse.ArgumentParser:
     download.add_argument("--data", action="store_true", help="with --voice/--speech: also the shared data")
 
     sub.add_parser("fetch", help="own recordings from the collector and recordings.folders")
+    audit = sub.add_parser("audit", help="Positive, Negative und Auslösungen unabhängig mit STT prüfen")
+    audit.add_argument("--output", default="audit", help="privater Berichtordner, relativ zum Projekt")
+    audit.add_argument("--stt-model", default="small", help="lokales faster-whisper-Modell oder Modellname")
+    audit.add_argument("--threads", type=int, default=4)
+    audit.add_argument("--model", action="append", default=[], help="TFLite samt Manifest bewerten (wiederholbar)")
+    audit.add_argument("--phrase", action="append", default=[], help="zusätzliche erlaubte STT-Schreibweise")
+    for label in ("positive", "negative", "unlabelled"):
+        audit.add_argument("--" + label + "-folder", action="append", default=[], help="zusätzliche WAV-Quelle")
     generate = sub.add_parser("generate", help="synthetic speech with Piper")
     generate.add_argument("--force", action="store_true", help="regenerate existing samples")
     sub.add_parser("features", help="augmented spectrograms")

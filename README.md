@@ -218,6 +218,12 @@ export:
 
 ## More data, fewer false activations
 
+Die [Datenprüfung mit `audit`](docs/data-audit.md) transkribiert vorhandene
+Positive, Negative und ungeprüfte Auslösungen lokal und bewertet sie optional
+mit mehreren Wakeword-Modellen. Sie markiert Widersprüche zum Anhören und
+verändert keine Labels. Der aktuelle Trainer trainiert microWakeWord direkt;
+ein separater Teacher ist dafür nicht erforderlich.
+
 - **Your own negatives** (`recordings.negative_folders`, or clips marked
   *not the wake word* in the collector) are the strongest lever against false
   activations at home: TV, conversations, words that sound alike. A held-out

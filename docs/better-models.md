@@ -10,6 +10,11 @@ records them with the satellites' own microphones.
 
 ## Your own negatives
 
+Vor einer neuen Trainingsrunde lassen sich Positive, Negative und ungeprüfte
+Auslösungen mit [`audit`](data-audit.md) unabhängig transkribieren und mit
+mehreren Wakeword-Modellen bewerten. Widersprüchliche Labels und schwierige
+Negative werden zum Anhören markiert; die Prüfung verändert keine Labels.
+
 Recordings **without** the wake word from your home — TV, conversations,
 words that sound alike — are the strongest lever against false activations:
 
