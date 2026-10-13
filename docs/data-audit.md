@@ -108,8 +108,9 @@ das sind rohe Teacher-Scores, keine kalibrierten Labelwahrscheinlichkeiten.
 `teacher train` ist ein separater Baseline-Lauf auf den freigegebenen
 Positiven und Negativen in `recordings/train` und `recordings/negative/train`.
 Bewertungsaufnahmen bleiben aus dem Optimierer und bestimmen den besten
-Checkpoint sowie den Frühstopp. Pro Clip trainiert er mit dem letzten
-1,5-Sekunden-Fenster; die anschließende Bewertung prüft alle gleitenden Fenster.
+Checkpoint sowie den Frühstopp. Positive und Bewertungsclips liefern das letzte
+1,5-Sekunden-Fenster; längere Trainingsnegative ein reproduzierbares zufälliges
+Fenster. Die anschließende Bewertung prüft alle gleitenden Fenster.
 `--device gpu` verlangt GPU, `auto` bevorzugt GPU und `--device cpu` erzwingt
 CPU. Die Log-Mel-Aufbereitung bleibt auf CPU; Modell und Optimierer laufen
 auf dem gewählten Gerät. GPU-Arbeit wird mit Student und Benchmarks serialisiert.
