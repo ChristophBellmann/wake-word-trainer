@@ -243,10 +243,10 @@ def report(project: Project, m: Measurement, index: int | None, budget: float) -
         if m.negatives:
             result.own_negatives_triggered = m.triggered(index)
             result.triggered_by = [rel(p) for p, s in zip(m.negatives, m.negative_peaks, strict=True) if s > cutoff]
-            result.satellite_negatives_triggered = sum(
+            result.satellite_negatives_triggered = int(sum(
                 path.parent.name != LOCAL and score > cutoff
                 for path, score in zip(m.negatives, m.negative_peaks, strict=True)
-            )
+            ))
     return result
 
 
