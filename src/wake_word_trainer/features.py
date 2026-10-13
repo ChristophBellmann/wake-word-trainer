@@ -10,6 +10,7 @@ set whenever there are any; synthetic speech then only trains.
 
 from __future__ import annotations
 
+import faulthandler
 import hashlib
 import json
 import multiprocessing
@@ -18,7 +19,8 @@ import random
 import shutil
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 import numpy as np
@@ -31,10 +33,15 @@ STEP_MS = 10
 AUGMENTED_SECONDS = 3.2
 Log = Callable[[str], None]
 _WORKER_AUGMENT = None
+_WORKER_MARKER = None
 
 
 def _initialize_worker(root: str, downloads: str, augment_kind: bool | None) -> None:
-    global _WORKER_AUGMENT
+    global _WORKER_AUGMENT, _WORKER_MARKER
+    faulthandler.enable()
+    diagnostics = Path(root) / "feature-workers"
+    diagnostics.mkdir(exist_ok=True)
+    _WORKER_MARKER = diagnostics / f"{os.getpid()}.json"
     # Vor dem ersten Framework-Import setzen; kein HIP im CPU-Feature-Prozess.
     for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES"):
         os.environ[key] = "-1"
@@ -46,9 +53,14 @@ def _initialize_worker(root: str, downloads: str, augment_kind: bool | None) -> 
 
 def _worker_features(job: tuple[str, int, int]) -> list[np.ndarray]:
     path, slide, seed = job
+    if _WORKER_MARKER is not None:
+        _WORKER_MARKER.write_text(json.dumps({"path": path, "seed": seed, "state": "processing"}))
     random.seed(seed)
     np.random.seed(seed)
-    return list(spectrograms([Path(path)], _WORKER_AUGMENT, 1, slide))
+    result = list(spectrograms([Path(path)], _WORKER_AUGMENT, 1, slide))
+    if _WORKER_MARKER is not None:
+        _WORKER_MARKER.unlink(missing_ok=True)
+    return result
 
 
 def parallel_spectrograms(project: Project, downloads: Path, clips: list[Path], repeat: int,
@@ -61,16 +73,51 @@ def parallel_spectrograms(project: Project, downloads: Path, clips: list[Path], 
         (str(path), slide, int.from_bytes(hashlib.sha256(f"{seed}:{iteration}:{path}".encode()).digest()[:4], "big"))
         for iteration in range(repeat) for path in clips
     )
-    with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
-                             initializer=_initialize_worker,
-                             initargs=(str(project.root), str(downloads), augment_kind)) as pool:
-        pending = deque()
+    def create_pool():
+        return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
+                                   initializer=_initialize_worker,
+                                   initargs=(str(project.root), str(downloads), augment_kind))
+
+    pool, restarts, pending = create_pool(), 0, deque()
+
+    def submit(job):
+        try:
+            return pool.submit(_worker_features, job)
+        except BrokenProcessPool as err:
+            future = Future()
+            future.set_exception(err)
+            return future
+
+    def consume():
+        nonlocal pool, restarts, pending
+        while True:
+            try:
+                result = pending[0][1].result()
+            except BrokenProcessPool as err:
+                pool.shutdown(wait=True, cancel_futures=True)
+                if restarts >= 2:
+                    raise ProjectError(
+                        f"Feature-Prozess wiederholt abgestürzt; Originalclips bleiben erhalten. "
+                        f"Diagnose: {project.path('feature-workers')}"
+                    ) from err
+                restarts += 1
+                print(f"Feature-Prozess abgestürzt: offener Block wird vollständig neu verarbeitet ({restarts}/2)",
+                      flush=True)
+                pool = create_pool()
+                pending = deque((job, submit(job)) for job, _ in pending)
+            else:
+                pending.popleft()
+                return result
+
+    try:
         for job in jobs:
-            pending.append(pool.submit(_worker_features, job))
+            pending.append((job, submit(job)))
             if len(pending) >= workers * 2:
-                yield from pending.popleft().result()
-        for future in pending:
-            yield from future.result()
+                yield from consume()
+        while pending:
+            yield from consume()
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def augmenter(project: Project, downloads: Path, truncate_randomly: bool = False):

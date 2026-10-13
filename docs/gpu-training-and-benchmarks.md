@@ -182,6 +182,15 @@ pro Clip und Wiederholung einen festen Seed und ist unabhängig von der
 Worker-Anzahl reproduzierbar. Der bisherige serielle Weg bleibt Standard;
 seine Augmentierungsfolge ist nicht identisch mit dem Parallelbetrieb.
 
+Ein nativer Worker-Absturz startet höchstens zweimal einen frischen Pool.
+Sämtliche offenen Clips werden mit demselben Seed und in derselben Reihenfolge
+erneut verarbeitet; kein Clip wird still übersprungen. Wiederholte Abstürze
+brechen die Vorbereitung ab. `feature-workers/` im privaten Projekt enthält
+die zuletzt laufenden Jobs für die Diagnose. Ein längerer Korpuslauf zeigte
+einen einzelnen SIGSEGV im nativen FFT-Code von `pymicro-features` 2.0.2;
+zwei isolierte Durchgänge desselben Prüfsatzes waren anschließend fehlerfrei.
+Die Ursache ist damit noch nicht abschließend geklärt.
+
 Ein vollständiger Trainingslauf hält die GPU-Belegung auch während Fetch,
 Feature-Bau und CPU-Bewertung. Der Trainingsprozess erbt dieselbe Belegung.
 Damit kann weder die Nachtplanung noch ein LLM zwischen zwei Trainingsphasen

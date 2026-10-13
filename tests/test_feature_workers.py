@@ -13,6 +13,43 @@ from wake_word_trainer.gpu import busy, lease
 from wake_word_trainer.project import Project
 
 
+def test_native_worker_crash_replays_every_pending_clip_in_order(tmp_path, monkeypatch):
+    from concurrent.futures import Future
+    from concurrent.futures.process import BrokenProcessPool
+
+    from wake_word_trainer import features
+
+    submitted, generations = [], []
+
+    class Pool:
+        def __init__(self, **kwargs):
+            generations.append(self)
+            self.generation = len(generations)
+
+        def submit(self, function, job):
+            submitted.append((self.generation, job[0]))
+            future = Future()
+            if self.generation == 1:
+                future.set_exception(BrokenProcessPool("simulierter nativer Absturz"))
+            else:
+                future.set_result([np.array([[int(Path(job[0]).stem)]])])
+            return future
+
+        def shutdown(self, **kwargs):
+            pass
+
+    from pathlib import Path
+
+    monkeypatch.setattr(features, "ProcessPoolExecutor", Pool)
+    project = Project.create(tmp_path / "project", "Test")
+    project.config["training"]["feature_workers"] = 2
+    clips = [tmp_path / f"{i}.wav" for i in range(8)]
+    result = list(parallel_spectrograms(project, tmp_path, clips, 1, 1, None))
+    assert [int(x[0, 0]) for x in result] == list(range(8))
+    assert len(generations) == 2
+    assert all((2, str(path)) in submitted for path in clips)
+
+
 @pytest.mark.slow
 def test_spawned_feature_workers_preserve_all_frames_and_order(tmp_path):
     project = Project.create(tmp_path / "project", "Test")
