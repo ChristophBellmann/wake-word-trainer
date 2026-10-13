@@ -79,3 +79,24 @@ def test_child_uses_parent_lease_without_releasing_it(tmp_path):
                        pass_fds=(handle.fileno(),), env=dict(os.environ), check=True)
         assert busy(path)
     assert not busy(path)
+
+
+@pytest.mark.slow
+def test_partial_mmap_is_rejected_until_rebuild_finishes(tmp_path):
+    from wake_word_trainer.datasets import check_features
+    from wake_word_trainer.features import write_mmap
+    from wake_word_trainer.project import ProjectError
+
+    target = tmp_path / "features" / "own_mmap"
+
+    def interrupted():
+        for _ in range(201):
+            yield np.ones((5, 40), np.float32)
+        raise RuntimeError("unterbrochener Worker")
+
+    with pytest.raises(RuntimeError, match="unterbrochener Worker"):
+        write_mmap(target, interrupted())
+    with pytest.raises(ProjectError, match="Unvollständiger Feature-Bau"):
+        check_features([target.parent])
+    write_mmap(target, (np.ones((5, 40), np.float32) for _ in range(201)))
+    assert check_features([target.parent]) == 1

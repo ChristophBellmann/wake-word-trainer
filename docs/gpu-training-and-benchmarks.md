@@ -195,6 +195,9 @@ die zuletzt laufenden Jobs für die Diagnose. Ein längerer Korpuslauf zeigte
 einen einzelnen SIGSEGV im nativen FFT-Code von `pymicro-features` 2.0.2;
 zwei isolierte Durchgänge desselben Prüfsatzes waren anschließend fehlerfrei.
 Die Ursache ist damit noch nicht abschließend geklärt.
+Unterbrochene MMAP-Bauten behalten eine `.incomplete`-Markierung. Auch ein
+direktes `train` verweigert diese teilweise bereits lesbaren Daten, bis die
+Vorbereitung vollständig wiederholt wurde.
 
 Ein vollständiger Trainingslauf hält die GPU-Belegung auch während Fetch,
 Feature-Bau und CPU-Bewertung. Der Trainingsprozess erbt dieselbe Belegung.

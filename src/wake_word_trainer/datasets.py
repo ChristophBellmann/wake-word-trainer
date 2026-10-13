@@ -239,6 +239,9 @@ def check_features(roots: list[Path]) -> int:
     for root in roots:
         if not root.is_dir():
             continue
+        incomplete = next(root.rglob("*.incomplete"), None)
+        if incomplete is not None:
+            raise ProjectError(f"Unvollständiger Feature-Bau; vor Training erneut vorbereiten: {incomplete}")
         candidates = sorted(
             [marker.parent for marker in root.rglob("type.ninja") if marker.read_text().strip() == "ragged"],
             key=lambda path: len(path.parts),

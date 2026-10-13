@@ -175,9 +175,11 @@ def spectrograms(clips: Iterable[Path], augment, repeat: int, slide_frames: int)
 def write_mmap(target: Path, generator: Iterator[np.ndarray]) -> int:
     from mmap_ninja.ragged import RaggedMmap
 
+    target.parent.mkdir(parents=True, exist_ok=True)
+    marker = target.with_name(target.name + ".incomplete")
+    marker.write_text("Feature-Bau läuft oder wurde unterbrochen\n", encoding="utf-8")
     if target.exists():
         shutil.rmtree(target)
-    target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
 
     def counted():
@@ -187,6 +189,7 @@ def write_mmap(target: Path, generator: Iterator[np.ndarray]) -> int:
             yield item
 
     RaggedMmap.from_generator(out_dir=str(target), sample_generator=counted(), batch_size=200, verbose=False)
+    marker.unlink()
     return count
 
 
