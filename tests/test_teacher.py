@@ -17,6 +17,7 @@ from wake_word_trainer.teacher import (
     source_balance,
     train,
     training_sources,
+    training_window,
 )
 
 torch = pytest.importorskip("torch")
@@ -151,3 +152,20 @@ def test_large_corpus_cannot_dilute_satellite_examples_with_source_balancing(tmp
         assert weights[1] / weights[1:].sum() == pytest.approx(4 / 7)
         assert weights[0] * ratio == pytest.approx(weights[1:].sum())
         assert groups["satellite_negative"] == 1
+
+
+def test_teacher_keeps_the_trigger_at_the_end_of_owned_negative_recordings(tmp_path):
+    p = Project.create(tmp_path / "p", "Hey Nova")
+    samples = np.zeros(48000, np.float32)
+    samples[-6000:] = 0.2
+    for folder in (p.recordings / "negative" / "train" / "satellite", p.path("tts", "negative")):
+        path = folder / "negative.wav"
+        audio.write(path, samples)
+        for seed in (1, 9, 123):
+            actual = training_window(p, path, samples, 24000, seed, "train", 0)
+            np.testing.assert_array_equal(actual, samples[-24000:])
+    external = tmp_path / "speech.wav"
+    audio.write(external, samples)
+    first = training_window(p, external, samples, 24000, 1, "train", 0)
+    np.testing.assert_array_equal(first, training_window(p, external, samples, 24000, 1, "train", 0))
+    assert first.shape == (24000,)

@@ -273,6 +273,20 @@ def source_balance(project: Project, sources: dict) -> tuple[np.ndarray, float, 
     return weights, float(negative_mass / positive_mass), dict(counts)
 
 
+def training_window(project: Project, path: Path, samples: np.ndarray, length: int, seed: int,
+                    split: str, truth: float) -> np.ndarray:
+    # Bei Satellitenclips liegt der auslösende Laut am Ende des Ringpuffers.
+    # Zufällig davor abzuschneiden würde genau den schwierigen Fall entfernen.
+    external = not path.is_relative_to(project.recordings) and not path.is_relative_to(project.path("tts"))
+    if split == "train" and not truth and external and len(samples) > length:
+        clip_seed = int.from_bytes(hashlib.sha256(path.read_bytes()).digest()[:4], "big") ^ seed
+        start = int(np.random.default_rng(clip_seed).integers(0, len(samples) - length + 1))
+        samples = samples[start:start + length]
+    else:
+        samples = samples[-length:]
+    return np.pad(samples, (0, max(0, length - len(samples))))
+
+
 def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int = 1337, device: str = "auto",
           include_corpus: bool = False, negative_limit: int = 6000, initial_model: Path | None = None,
           balanced_sources: bool = False) -> Path:
@@ -314,15 +328,7 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
         for truth, paths in ((1.0, positives), (0.0, negatives)):
             for path in paths:
                 samples = audio.read(path)
-                if split == "train" and not truth and len(samples) > frontend.length:
-                    # Lange Sprache/Hintergründe nicht nur an ihrem Ende ansehen.
-                    clip_seed = int.from_bytes(hashlib.sha256(path.read_bytes()).digest()[:4], "big") ^ seed
-                    rng = np.random.default_rng(clip_seed)
-                    start = int(rng.integers(0, len(samples) - frontend.length + 1))
-                    samples = samples[start : start + frontend.length]
-                else:
-                    samples = samples[-frontend.length :]
-                samples = np.pad(samples, (0, max(0, frontend.length - len(samples))))
+                samples = training_window(project, path, samples, frontend.length, seed, split, truth)
                 features.append(frontend.clip(samples))
                 labels.append(truth)
         return TensorDataset(

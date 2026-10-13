@@ -108,9 +108,11 @@ das sind rohe Teacher-Scores, keine kalibrierten Labelwahrscheinlichkeiten.
 `teacher train` ist ein separater Baseline-Lauf auf den freigegebenen
 Positiven und Negativen in `recordings/train` und `recordings/negative/train`.
 Bewertungsaufnahmen bleiben aus dem Optimierer und bestimmen den besten
-Checkpoint sowie den Frühstopp. Positive und Bewertungsclips liefern das letzte
-1,5-Sekunden-Fenster; längere Trainingsnegative ein reproduzierbares zufälliges
-Fenster. Die anschließende Bewertung prüft alle gleitenden Fenster.
+Checkpoint sowie den Frühstopp. Positive, eigene Negative, negative TTS und
+Bewertungsclips liefern das letzte 1,5-Sekunden-Fenster. Nur längere externe
+Trainingsnegative liefern ein reproduzierbares zufälliges Fenster. So bleibt
+bei Satelliten-Negativen der auslösende Laut am Ende des Ringpuffers erhalten.
+Die anschließende Bewertung prüft alle gleitenden Fenster.
 `--device gpu` verlangt GPU, `auto` bevorzugt GPU und `--device cpu` erzwingt
 CPU. Die Log-Mel-Aufbereitung bleibt auf CPU; Modell und Optimierer laufen
 auf dem gewählten Gerät. GPU-Arbeit wird mit Student und Benchmarks serialisiert.
@@ -128,7 +130,7 @@ wake-word-trainer -p comparison teacher train --device gpu --epochs 40 \
 `--initial-model` ist optional und verlangt identische Log-Mel-Parameter.
 `--negative-limit` begrenzt jedes externe Korpus nach dem Trainings-/Holdout-
 Split. Derselbe Inhalts-Split wie beim Student hält dessen externe Prüfclips
-aus dem Teacher-Optimierer. Positive TTS beachten den Dauerfilter; lange
+aus dem Teacher-Optimierer. Positive TTS beachten den Dauerfilter; externe
 Trainingsnegative liefern ein reproduzierbares zufälliges Fenster. Eigene
 Bewertungsaufnahmen bestimmen weiter den besten Checkpoint. Quellen und
 Anzahlen stehen privat in `teacher/training-sources.json` und im Checkpoint.
