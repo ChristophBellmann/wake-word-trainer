@@ -92,7 +92,8 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
     project = Project.load(args.project)
     output = project.resolve(args.output)
     state = State(project)
-    state.update(state="running", phase="benchmark", started_at=now(), message="GPU-Durchsatz wird gemessen")
+    state.update(state="running", phase="benchmark", started_at=now(), message="GPU-Durchsatz wird gemessen",
+                 best_model_available=False)
     try:
         report = run(
             project,
@@ -114,7 +115,8 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             json.dumps({"report": str(output / "summary.json"), **report}, indent=2)
         )
         state.update(
-            state="completed", phase="done", ended_at=now(), exit_code=0, message=f"GPU-Benchmark fertig: {output}"
+            state="completed", phase="done", ended_at=now(), exit_code=0, message=f"GPU-Benchmark fertig: {output}",
+            best_model_available=False,
         )
     except BaseException as err:
         state.update(state="failed", ended_at=now(), last_error=str(err))

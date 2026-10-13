@@ -160,6 +160,11 @@ markiertes Modell nicht ausrollen. `/v1/status` enthält den Benchmark-Bericht
 und den letzten Trainings-Gerätenachweis. AMD-Last und VRAM kommen direkt aus
 sysfs und benötigen kein funktionierendes `rocm-smi`.
 
+Der Benchmark setzt `best_model_available` auf `false`. Dadurch übernimmt auch
+die Collector-Integration nach einem neuen Abschlusszeitpunkt kein altes
+Exportmodell als vermeintlich neu trainiert. Bereits gespeicherte Modelle
+bleiben unverändert abrufbar.
+
 Die GPU-Dateisperre unter `$XDG_CACHE_HOME/wake-word-trainer/gpu.lock` bzw.
 `~/.cache/wake-word-trainer/gpu.lock` gilt projektübergreifend. Die Workstation-
 Standby-Steuerung in `llama-chat` berücksichtigt sie auch in CPU-/I/O-Pausen
