@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import http.server
 import threading
 from collections.abc import Callable
@@ -85,3 +86,4 @@ def free_system(monkeypatch, request):
     monkeypatch.setattr("wake_word_trainer.system_check.memory", lambda: {"available_memory_gb": 64.0})
     monkeypatch.setattr("wake_word_trainer.system_check.load_per_cpu", lambda: 0.1)
     monkeypatch.setattr("wake_word_trainer.gpu.busy", lambda: False)
+    monkeypatch.setattr("wake_word_trainer.pipeline.lease", lambda *args, **kwargs: contextlib.nullcontext())
