@@ -16,6 +16,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int)
     parser.add_argument("--control", action="store_true")
     parser.add_argument("--runtime")
+    parser.add_argument("--gpu-lock-fd", type=int)
     args, remaining = parser.parse_known_args()
     if args.runtime:
         import yaml
@@ -28,7 +29,10 @@ def main() -> None:
             os.environ.get(key) == "-1"
             for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES")
         )
-        guard = lease("student-training") if selected != "cpu" and not hidden else contextlib.nullcontext()
+        guard = (
+            lease("student-training", inherited_fd=args.gpu_lock_fd)
+            if selected != "cpu" and not hidden else contextlib.nullcontext()
+        )
         with guard:
             runtime = tensorflow_device(selected, int(config.get("compute_threads", 4)))
             Path(args.runtime).parent.joinpath("training_runtime.json").write_text(json.dumps(runtime, indent=2))

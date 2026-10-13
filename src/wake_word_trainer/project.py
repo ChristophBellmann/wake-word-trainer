@@ -79,6 +79,7 @@ DEFAULTS: dict[str, Any] = {
         "input_pipeline": "prefetch",
         "tfrecord_examples": 65536,
         "input_threads": 4,
+        "feature_workers": 1,
         "compute_threads": 4,
         "prefetch_batches": 2,
         "validation_cache_mb": 512,
@@ -256,11 +257,14 @@ class Project:
             "prefetch_batches",
             "progress_interval",
             "validation_batch_size",
+            "feature_workers",
         ):
             if type(config["training"][key]) is not int or config["training"][key] < 1:
                 raise ProjectError(f"training.{key} muss eine positive ganze Zahl sein")
         if (
-            not all(1 <= config["training"][key] <= 32 for key in ("input_threads", "compute_threads"))
+            not all(
+                1 <= config["training"][key] <= 32 for key in ("input_threads", "compute_threads", "feature_workers")
+            )
             or int(config["training"]["validation_cache_mb"]) < 0
         ):
             raise ProjectError("Threads müssen 1 bis 32 und der Validierungs-Cache mindestens null sein")

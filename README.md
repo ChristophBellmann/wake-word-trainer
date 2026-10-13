@@ -200,6 +200,7 @@ training:
   input_pipeline: prefetch
   tfrecord_examples: 65536
   input_threads: 4
+  feature_workers: 1                # CPU feature preparation, spawn for >1
   compute_threads: 4
   prefetch_batches: 2
   validation_cache_mb: 512

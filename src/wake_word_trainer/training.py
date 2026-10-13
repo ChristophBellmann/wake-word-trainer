@@ -148,7 +148,7 @@ def config(project: Project, downloads: Path) -> dict:
 STEP_LINE = re.compile(r"Step #(\d+)")
 
 
-def _stream(command: list[str], log_path: Path, on_step: Callable[[int], None] | None) -> int:
+def _stream(command: list[str], log_path: Path, on_step: Callable[[int], None] | None, gpu_handle=None) -> int:
     """Run microWakeWord, echo and log its output, report training steps as they pass."""
     with log_path.open("a", encoding="utf-8") as log:
         process = subprocess.Popen(
@@ -159,6 +159,7 @@ def _stream(command: list[str], log_path: Path, on_step: Callable[[int], None] |
             errors="replace",
             bufsize=1,
             env=environment(),
+            pass_fds=(gpu_handle.fileno(),) if gpu_handle is not None else (),
         )
         assert process.stdout is not None
         for line in process.stdout:
@@ -177,6 +178,7 @@ def train(
     resume: bool = True,
     runner=None,
     on_step: Callable[[int], None] | None = None,
+    gpu_handle=None,
 ) -> Path:
     if runner is None:
         from .datasets import check_features
@@ -230,6 +232,8 @@ def train(
         *model_args(project.config["training"]["model_profile"]),
     ]
     seed = project.config["training"].get("seed")
+    if gpu_handle is not None:
+        command[5:5] = ["--gpu-lock-fd", str(gpu_handle.fileno())]
     if project.config["training"]["early_stopping_patience"] or project.config["training"]["lr_patience"]:
         if project.config["training"]["engine"] == "standard":
             command[5:5] = ["--control"]
@@ -240,7 +244,7 @@ def train(
     if runner is not None:
         returncode = runner(command, check=False).returncode
     else:
-        returncode = _stream(command, project.path("training.log"), on_step)
+        returncode = _stream(command, project.path("training.log"), on_step, gpu_handle)
     if returncode != 0 or not model.is_file():
         if returncode < 0:
             raise ProjectError(f"Training crashed ({signal.Signals(-returncode).name}); see training.log")

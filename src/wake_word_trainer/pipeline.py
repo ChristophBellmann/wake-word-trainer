@@ -8,7 +8,9 @@ activation budget, then fewest false activations) is exported.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import shutil
 from collections.abc import Callable
 from dataclasses import asdict
@@ -18,6 +20,7 @@ from . import mining
 from .evaluate import Report, evaluate
 from .export import export
 from .features import build
+from .gpu import lease
 from .project import Project, ProjectError
 from .recordings import fetch
 from .state import State, now
@@ -69,6 +72,23 @@ def better(new: Report, old: Report | None) -> bool:
 def run(
     project: Project,
     downloads: Path,
+    **kwargs,
+) -> Report | None:
+    hidden = any(
+        os.environ.get(key) == "-1" for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES")
+    )
+    guard = (
+        lease("training-pipeline")
+        if not kwargs.get("prepare_only") and project.config["training"]["device"] != "cpu" and not hidden
+        else contextlib.nullcontext()
+    )
+    with guard as handle:
+        return _run(project, downloads, gpu_handle=handle, **kwargs)
+
+
+def _run(
+    project: Project,
+    downloads: Path,
     *,
     resume: bool = False,
     force_tts: bool = False,
@@ -77,6 +97,7 @@ def run(
     profile: str = "",
     prepare_only: bool = False,
     log: Log = print,
+    gpu_handle=None,
 ) -> Report | None:
     settings = project.config["training"]
     if steps is not None:
@@ -145,6 +166,7 @@ def run(
                 downloads,
                 resume=resume or number > 1,
                 on_step=lambda step: state.update(step_current=step),
+                gpu_handle=gpu_handle,
             )
             state.update(phase="evaluate", step_current=int(settings["steps"]))
             report = evaluate(project, model, downloads)

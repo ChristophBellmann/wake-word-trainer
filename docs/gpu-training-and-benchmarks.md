@@ -43,6 +43,7 @@ training:
   input_pipeline: tfrecord          # alternativ prefetch oder python
   tfrecord_examples: 65536
   input_threads: 4
+  feature_workers: 4                # CPU-Aufbereitung; Standard 1
   compute_threads: 4
   prefetch_batches: 2
   batch_size: 256
@@ -170,3 +171,19 @@ Bibliothekspfade aus `ROCM_PATH` (Standard `/opt/rocm`) und erhält explizite
 Umgebungseinstellungen. Custom-Wheels werden nicht durch PyPI-Pakete ersetzt.
 Wheels, Treiber, GPU und RAM müssen weiterhin zusammenpassen; siehe
 [Installation](installation.md) und [Ressourcen](resources.md).
+
+## CPU-Aufbereitung und Belegung zwischen den Phasen
+
+`training.feature_workers` verteilt den Microfrontend-Bau auf unabhängige
+CPU-Prozesse. Sie starten mit `spawn` und ausgeblendeter GPU, bevor TensorFlow
+geladen wird. Höchstens zweimal die Worker-Anzahl an Clips ist gleichzeitig
+unterwegs; die Ausgabe bleibt in Quellreihenfolge. Parallelbetrieb verwendet
+pro Clip und Wiederholung einen festen Seed und ist unabhängig von der
+Worker-Anzahl reproduzierbar. Der bisherige serielle Weg bleibt Standard;
+seine Augmentierungsfolge ist nicht identisch mit dem Parallelbetrieb.
+
+Ein vollständiger Trainingslauf hält die GPU-Belegung auch während Fetch,
+Feature-Bau und CPU-Bewertung. Der Trainingsprozess erbt dieselbe Belegung.
+Damit kann weder die Nachtplanung noch ein LLM zwischen zwei Trainingsphasen
+die GPU übernehmen oder die Workstation in Standby schicken. Ein reiner
+`run --prepare-only` reserviert keine GPU.

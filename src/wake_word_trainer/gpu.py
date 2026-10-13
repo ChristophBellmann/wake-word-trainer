@@ -36,11 +36,18 @@ def lock_path() -> Path:
 
 
 @contextlib.contextmanager
-def lease(label: str, path: Path | None = None):
+def lease(label: str, path: Path | None = None, inherited_fd: int | None = None):
     """Eine GPU-Arbeit pro Benutzer; kein fork und keine parallelen HIP-Initialisierungen."""
     import fcntl
 
     target = path or lock_path()
+    if inherited_fd is not None:
+        expected, actual = target.stat(), os.fstat(inherited_fd)
+        if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+            raise ProjectError("Geerbte GPU-Belegung gehört nicht zur gemeinsamen Sperrdatei")
+        fcntl.flock(inherited_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield None  # Der Elternprozess hält und beendet die Belegung.
+        return
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a+") as handle:
         target.chmod(0o600)

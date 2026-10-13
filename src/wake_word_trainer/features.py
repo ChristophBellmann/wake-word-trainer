@@ -10,10 +10,15 @@ set whenever there are any; synthetic speech then only trains.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import multiprocessing
+import os
 import random
 import shutil
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +30,47 @@ from .recordings import LOCAL
 STEP_MS = 10
 AUGMENTED_SECONDS = 3.2
 Log = Callable[[str], None]
+_WORKER_AUGMENT = None
+
+
+def _initialize_worker(root: str, downloads: str, augment_kind: bool | None) -> None:
+    global _WORKER_AUGMENT
+    # Vor dem ersten Framework-Import setzen; kein HIP im CPU-Feature-Prozess.
+    for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES"):
+        os.environ[key] = "-1"
+    os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
+    os.environ["TF_NUM_INTEROP_THREADS"] = "1"
+    if augment_kind is not None:
+        _WORKER_AUGMENT = augmenter(Project.load(root), Path(downloads), augment_kind)
+
+
+def _worker_features(job: tuple[str, int, int]) -> list[np.ndarray]:
+    path, slide, seed = job
+    random.seed(seed)
+    np.random.seed(seed)
+    return list(spectrograms([Path(path)], _WORKER_AUGMENT, 1, slide))
+
+
+def parallel_spectrograms(project: Project, downloads: Path, clips: list[Path], repeat: int,
+                         slide: int, augment_kind: bool | None) -> Iterator[np.ndarray]:
+    """Geordnete, begrenzte CPU-Arbeit; unabhängig von Worker-Anzahl deterministisch."""
+    workers = int(project.config["training"]["feature_workers"])
+    seed = project.config["training"].get("seed")
+    seed = 1337 if seed is None else int(seed)
+    jobs = (
+        (str(path), slide, int.from_bytes(hashlib.sha256(f"{seed}:{iteration}:{path}".encode()).digest()[:4], "big"))
+        for iteration in range(repeat) for path in clips
+    )
+    with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
+                             initializer=_initialize_worker,
+                             initargs=(str(project.root), str(downloads), augment_kind)) as pool:
+        pending = deque()
+        for job in jobs:
+            pending.append(pool.submit(_worker_features, job))
+            if len(pending) >= workers * 2:
+                yield from pending.popleft().result()
+        for future in pending:
+            yield from future.result()
 
 
 def augmenter(project: Project, downloads: Path, truncate_randomly: bool = False):
@@ -171,22 +217,16 @@ def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]
         if not clips:
             return
         log(f"Features {name}/{split}: {len(clips)} clips x {times}")
-        counts[f"{name}/{split}"] = write_mmap(
-            root / name / split / f"{name}_mmap",
-            spectrograms(
-                clips,
-                None
-                if split != "training"
-                or (
-                    name
-                    in {"own_negative", "satellite_negative", "speech_extra", "background_negative", "tts_negative"}
-                    and not project.config["augmentation"]["augment_negatives"]
-                )
-                else augments[random_window],
-                times,
-                slide,
-            ),
+        use_augment = split == "training" and not (
+            name in {"own_negative", "satellite_negative", "speech_extra", "background_negative", "tts_negative"}
+            and not project.config["augmentation"]["augment_negatives"]
         )
+        generator = (
+            parallel_spectrograms(project, downloads, clips, times, slide, random_window if use_augment else None)
+            if project.config["training"]["feature_workers"] > 1
+            else spectrograms(clips, augments[random_window] if use_augment else None, times, slide)
+        )
+        counts[f"{name}/{split}"] = write_mmap(root / name / split / f"{name}_mmap", generator)
 
     # Mined false activations (features/mined) belong to earlier rounds and stay.
     if root.exists():
