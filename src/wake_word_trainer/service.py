@@ -47,6 +47,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -129,16 +130,35 @@ class Service:
             ):
                 return 409, {"error": "a run or firmware rollout is active"}
             self.project = Project.load(self.project.root)
+            from .gpu import busy, environment
+
+            if not profile.get("prepare_only") and busy():
+                return 409, {"error": "GPU wird bereits von einem Trainer-, Teacher- oder Benchmark-Lauf belegt"}
+            benchmarking = profile.get("kind") == "benchmark"
             command = [sys.executable, "-m", "wake_word_trainer", "-p", str(self.project.root)]
             if self.downloads:
                 command += ["--downloads", str(self.downloads)]
-            command += ["run", "--profile", profile_id]
-            if profile.get("prepare_only"):
-                command.append("--prepare-only")
-            if "rounds" in profile:
-                command += ["--rounds", str(int(profile["rounds"]))]
-            if "steps" in profile:
-                command += ["--steps", str(int(profile["steps"]))]
+            if benchmarking:
+                folder = f"benchmarks/run_{int(time.time())}"
+                command += ["benchmark", "--output", folder, "--device", "gpu"]
+                for key, flag in [("steps", "--steps"), ("warmup", "--warmup"), ("repeats", "--repeats")]:
+                    if key in profile:
+                        command += [flag, str(int(profile[key]))]
+                for key, flag in [
+                    ("batch_sizes", "--batch-size"),
+                    ("engines", "--engine"),
+                    ("pipelines", "--pipeline"),
+                ]:
+                    for value in profile.get(key, []):
+                        command += [flag, str(value)]
+            else:
+                command += ["run", "--profile", profile_id]
+                if profile.get("prepare_only"):
+                    command.append("--prepare-only")
+                if "rounds" in profile:
+                    command += ["--rounds", str(int(profile["rounds"]))]
+                if "steps" in profile:
+                    command += ["--steps", str(int(profile["steps"]))]
             problems = self.system.before_start()
             if problems:
                 # Nothing started: the last run's state stays as it was.
@@ -153,7 +173,12 @@ class Service:
                     self.resources.release()
                     return 503, self._not_enough(problems)
                 self.process = subprocess.Popen(
-                    command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=self.project.root
+                    command,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    cwd=self.project.root,
+                    env=environment(),
                 )
             except Exception as err:
                 self.resources.release()
@@ -162,7 +187,7 @@ class Service:
             finally:
                 log.close()
             self.resource_warning = ""
-            self.watcher = threading.Thread(target=self._finished, args=(self.process,), daemon=True)
+            self.watcher = threading.Thread(target=self._finished, args=(self.process, not benchmarking), daemon=True)
             self.watcher.start()
             threading.Thread(target=self._watch_resources, args=(self.process,), daemon=True).start()
         return 202, {"started": profile_id}
@@ -187,7 +212,7 @@ class Service:
             except subprocess.TimeoutExpired:
                 pass
 
-    def _finished(self, process: subprocess.Popen) -> None:
+    def _finished(self, process: subprocess.Popen, allow_deployment: bool = True) -> None:
         process.wait()
         with self.lock:
             if self.process is not process:
@@ -203,7 +228,13 @@ class Service:
             deployment = self.project.path("deployment.json")
             ready = deployment.is_file() and json.loads(deployment.read_text()).get("state") == "ready"
             trained = read(self.project).get("best_model_available")
-            if process.returncode == 0 and trained and ready and self.project.config["deployment"]["enabled"]:
+            if (
+                allow_deployment
+                and process.returncode == 0
+                and trained
+                and ready
+                and self.project.config["deployment"]["enabled"]
+            ):
                 with self.project.path("deployment.log").open("a") as log:
                     self.deployment_process = subprocess.Popen(
                         [sys.executable, "-m", "wake_word_trainer.deployment", str(self.project.root)],
@@ -254,6 +285,12 @@ class Service:
                 "available": importlib.util.find_spec("faster_whisper") is not None,
             },
         )
+        runtime = self.project.path("training_runtime.json")
+        if runtime.is_file():
+            state["training_runtime"] = json.loads(runtime.read_text())
+        benchmark = self.project.path("benchmark.json")
+        if benchmark.is_file():
+            state["benchmark"] = json.loads(benchmark.read_text())
         return state
 
     # -- Speaker test -------------------------------------------------------------
@@ -311,6 +348,11 @@ class Service:
 
 def gpu() -> dict:
     """GPU load, best effort: AMD (rocm-smi) or NVIDIA (nvidia-smi)."""
+    from .gpu import snapshot
+
+    measured = snapshot()
+    if measured:
+        return measured
     if shutil.which("nvidia-smi"):
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],

@@ -24,7 +24,7 @@ def test_legacy_import_preserves_logits_and_no_longer_needs_source(tmp_path):
     import_checkpoint(original, config, target)
     original.unlink()
     config.unlink()
-    teacher = Teacher(target)
+    teacher = Teacher(target, device="cpu")
     samples = np.sin(np.arange(48000) * 0.1).astype(np.float32) * 0.1
     features = Frontend(Parameters()).windows(samples)
     with torch.inference_mode():
@@ -50,9 +50,9 @@ def test_tiny_training_and_scoring_with_stable_eval_split(tmp_path):
             samples[: index + (1 if split == "eval" else 3)] = 0
             audio.write(project.recordings / split / "room" / f"p{index}.wav", samples)
             audio.write(project.recordings / "negative" / split / "room" / f"n{index}.wav", samples * 0.01)
-    checkpoint = train(project, epochs=1, batch_size=2)
+    checkpoint = train(project, epochs=1, batch_size=2, device="cpu")
     assert checkpoint.is_file()
-    assert 0 <= Teacher(checkpoint)(np.ones(24000, np.float32) * 0.1)["peak"] <= 1
+    assert 0 <= Teacher(checkpoint, device="cpu")(np.ones(24000, np.float32) * 0.1)["peak"] <= 1
     assert len(json.loads(project.path("teacher", "training.json").read_text())) == 1
 
 
@@ -62,7 +62,7 @@ def test_teacher_refuses_train_eval_leakage(tmp_path):
         audio.write(project.recordings / split / "room" / "p.wav", np.ones(24000) * 0.1)
         audio.write(project.recordings / "negative" / split / "room" / "n.wav", np.ones(24000) * 0.01)
     with pytest.raises(ProjectError, match="identischer Inhalt"):
-        train(project, epochs=1)
+        train(project, epochs=1, device="cpu")
 
 
 def test_score_cli_keeps_audio_hash_separate_from_model_hash(tmp_path, monkeypatch):
@@ -74,7 +74,7 @@ def test_score_cli_keeps_audio_hash_separate_from_model_hash(tmp_path, monkeypat
     audio.write(clip, np.ones(24000) * 0.1)
 
     class FakeTeacher:
-        def __init__(self, *args):
+        def __init__(self, *args, **kwargs):
             self.metadata = {"sha256": "model-hash"}
 
         def __call__(self, samples):

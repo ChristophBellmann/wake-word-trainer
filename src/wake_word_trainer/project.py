@@ -74,6 +74,16 @@ DEFAULTS: dict[str, Any] = {
         "rir_folders": [],
     },
     "training": {
+        "device": "auto",
+        "engine": "standard",
+        "input_pipeline": "prefetch",
+        "tfrecord_examples": 65536,
+        "input_threads": 4,
+        "compute_threads": 4,
+        "prefetch_batches": 2,
+        "validation_cache_mb": 512,
+        "validation_batch_size": 1024,
+        "progress_interval": 25,
         "seed": None,  # optional reproducible augmentation, sampling and model initialization
         "model_profile": "esphome_v2_like",
         "time_mask_max_size": 0,
@@ -233,6 +243,27 @@ class Project:
             raise ProjectError("training.seed must be null or an integer in 0..4294967295")
         if config["training"]["model_profile"] not in {"esphome_v2_like", "current", "current_wider"}:
             raise ProjectError("training.model_profile: esphome_v2_like, current oder current_wider erforderlich")
+        if config["training"]["device"] not in {"auto", "gpu", "cpu"}:
+            raise ProjectError("training.device muss auto, gpu oder cpu sein")
+        if config["training"]["engine"] not in {"standard", "optimized"}:
+            raise ProjectError("training.engine muss standard oder optimized sein")
+        if config["training"]["input_pipeline"] not in {"python", "prefetch", "tfrecord"}:
+            raise ProjectError("training.input_pipeline muss python, prefetch oder tfrecord sein")
+        for key in (
+            "tfrecord_examples",
+            "input_threads",
+            "compute_threads",
+            "prefetch_batches",
+            "progress_interval",
+            "validation_batch_size",
+        ):
+            if type(config["training"][key]) is not int or config["training"][key] < 1:
+                raise ProjectError(f"training.{key} muss eine positive ganze Zahl sein")
+        if (
+            not all(1 <= config["training"][key] <= 32 for key in ("input_threads", "compute_threads"))
+            or int(config["training"]["validation_cache_mb"]) < 0
+        ):
+            raise ProjectError("Threads müssen 1 bis 32 und der Validierungs-Cache mindestens null sein")
         for key in ("time_mask_max_size", "time_mask_count", "freq_mask_max_size", "freq_mask_count"):
             if not 0 <= int(config["training"][key]) <= 100:
                 raise ProjectError(f"training.{key} muss zwischen 0 und 100 liegen")

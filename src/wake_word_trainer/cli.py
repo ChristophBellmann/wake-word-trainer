@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -84,6 +85,43 @@ def cmd_experiment(args: argparse.Namespace) -> None:
         print(f"{len(run(output, _downloads(project, args)))} Läufe bewertet: {output / 'results.json'}")
 
 
+def cmd_benchmark(args: argparse.Namespace) -> None:
+    from .benchmark import run
+    from .state import State, now
+
+    project = Project.load(args.project)
+    output = project.resolve(args.output)
+    state = State(project)
+    state.update(state="running", phase="benchmark", started_at=now(), message="GPU-Durchsatz wird gemessen")
+    try:
+        report = run(
+            project,
+            _downloads(project, args),
+            output,
+            engines=args.engine or ["standard", "optimized"],
+            pipelines=args.pipeline or ["python", "prefetch", "tfrecord"],
+            batch_sizes=args.batch_size or [128, 256],
+            steps=args.steps,
+            warmup=args.warmup,
+            repeats=args.repeats,
+            device=args.device,
+            model_profile=args.model_profile,
+            input_threads=args.input_threads,
+            validation_cache_mb=args.validation_cache_mb,
+            validation_batch_size=args.validation_batch_size,
+        )
+        project.path("benchmark.json").write_text(
+            json.dumps({"report": str(output / "summary.json"), **report}, indent=2)
+        )
+        state.update(
+            state="completed", phase="done", ended_at=now(), exit_code=0, message=f"GPU-Benchmark fertig: {output}"
+        )
+    except BaseException as err:
+        state.update(state="failed", ended_at=now(), last_error=str(err))
+        raise
+    print(f"Benchmark: {output / 'README.md'}")
+
+
 def cmd_audit(args: argparse.Namespace) -> None:
     from .audit import run
 
@@ -118,12 +156,12 @@ def cmd_teacher(args: argparse.Namespace) -> None:
         import_checkpoint(project.resolve(args.checkpoint), project.resolve(args.config), target)
         print(f"Portabler Teacher: {target}")
     elif args.teacher_command == "train":
-        print(f"Teacher gespeichert: {train(project, args.epochs, args.batch_size, args.seed)}")
+        print(f"Teacher gespeichert: {train(project, args.epochs, args.batch_size, args.seed, device=args.device)}")
     else:
         from . import audio
         from .audit import inventory
 
-        scorer = Teacher(project.resolve(args.model), args.threads)
+        scorer = Teacher(project.resolve(args.model), args.threads, device=args.device)
         rows = []
         for item in inventory(project, [("unlabelled", project.resolve(p)) for p in args.folder]):
             rows.append({**item, "teacher": scorer(audio.read(item["sources"][0]["path"]))})
@@ -299,6 +337,7 @@ COMMANDS = {
     "fetch": cmd_fetch,
     "data": cmd_data,
     "experiment": cmd_experiment,
+    "benchmark": cmd_benchmark,
     "audit": cmd_audit,
     "teacher": cmd_teacher,
     "generate": cmd_generate,
@@ -354,6 +393,21 @@ def parser() -> argparse.ArgumentParser:
     experiment_prepare.add_argument("--output", default="experiments")
     experiment_run = experiment_sub.add_parser("run")
     experiment_run.add_argument("--output", default="experiments")
+    benchmark = sub.add_parser(
+        "benchmark", help="GPU-Durchsatz auf vorhandenen Features messen; ohne Export oder Rollout"
+    )
+    benchmark.add_argument("--output", default="benchmarks/latest")
+    benchmark.add_argument("--device", choices=["gpu", "cpu", "auto"], default="gpu")
+    benchmark.add_argument("--engine", choices=["standard", "optimized"], action="append")
+    benchmark.add_argument("--pipeline", choices=["python", "prefetch", "tfrecord"], action="append")
+    benchmark.add_argument("--batch-size", type=int, action="append")
+    benchmark.add_argument("--warmup", type=int, default=25)
+    benchmark.add_argument("--steps", type=int, default=100)
+    benchmark.add_argument("--repeats", type=int, default=2)
+    benchmark.add_argument("--input-threads", type=int)
+    benchmark.add_argument("--validation-cache-mb", type=int)
+    benchmark.add_argument("--validation-batch-size", type=int)
+    benchmark.add_argument("--model-profile", choices=["esphome_v2_like", "current", "current_wider"])
     audit = sub.add_parser("audit", help="Positive, Negative und Auslösungen unabhängig mit STT prüfen")
     audit.add_argument("--output", default="audit", help="privater Berichtordner, relativ zum Projekt")
     audit.add_argument("--stt-model", default="small", help="lokales faster-whisper-Modell oder Modellname")
@@ -373,11 +427,13 @@ def parser() -> argparse.ArgumentParser:
     teacher_train.add_argument("--epochs", type=int, default=30)
     teacher_train.add_argument("--batch-size", type=int, default=128)
     teacher_train.add_argument("--seed", type=int, default=1337)
+    teacher_train.add_argument("--device", choices=["auto", "gpu", "cpu"], default="auto")
     teacher_score = teacher_sub.add_parser("score")
     teacher_score.add_argument("--model", default="teacher/model.pt")
     teacher_score.add_argument("--folder", action="append", default=[])
     teacher_score.add_argument("--output", default="teacher/scores.json")
     teacher_score.add_argument("--threads", type=int, default=2)
+    teacher_score.add_argument("--device", choices=["auto", "gpu", "cpu"], default="auto")
     generate = sub.add_parser("generate", help="synthetic speech with Piper")
     generate.add_argument("--force", action="store_true", help="regenerate existing samples")
     sub.add_parser("features", help="augmented spectrograms")
@@ -410,6 +466,17 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    if (
+        argv is None
+        and args.command in {"run", "train", "teacher", "benchmark", "experiment", "serve", "audit"}
+        and not os.environ.get("WAKE_WORD_TRAINER_RUNTIME_READY")
+    ):
+        from .gpu import environment
+
+        prepared = environment()
+        if any(prepared.get(key) != os.environ.get(key) for key in ("LD_LIBRARY_PATH", "LD_PRELOAD")):
+            prepared["WAKE_WORD_TRAINER_RUNTIME_READY"] = "1"
+            os.execve(sys.executable, [sys.executable, "-m", "wake_word_trainer", *sys.argv[1:]], prepared)
     try:
         COMMANDS[args.command](args)
     except ProjectError as err:

@@ -15,6 +15,7 @@ wake-word-trainer [-p PROJECT] [--downloads FOLDER] <command> [options]
 | `data import <manifest>` / `data check` | [Datenübernahme](migration-from-wakeword-lab.md), explizite Rollen, Herkunft und Holdouts; `--dry-run` |
 | `teacher import/train/score` | optionalen Log-Mel-Teacher mit eingebetteten Parametern übernehmen, neu trainieren und prüfen |
 | `experiment prepare/run` | eingefrorene Seed-Vergleiche ohne Rollout; `prepare --seed <n>` wiederholbar, `--model-profile`, `--output` |
+| `benchmark` | [GPU-Durchsatz](gpu-training-and-benchmarks.md) mit echten Features, getrennten Prozessen, Aufwärmen und Wiederholungen; kein Rollout |
 | `audit` | [Datenprüfung](data-audit.md): lokale STT, optionale `--model`-Bewertung, zusätzliche `--positive-folder`, `--negative-folder`, `--unlabelled-folder`; keine Labeländerung |
 | `generate` | synthetic speech with Piper; `--force` regenerates |
 | `features` | augmented spectrograms |

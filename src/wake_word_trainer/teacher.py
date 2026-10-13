@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 from dataclasses import asdict, dataclass
@@ -10,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from . import audio
+from .gpu import lease, torch_device
 from .project import Project, ProjectError
 
 FORMAT = "wake-word-trainer-logmel-v1"
@@ -138,21 +140,26 @@ def import_checkpoint(source: Path, config: Path, target: Path) -> None:
 
 
 class Teacher:
-    def __init__(self, path: Path, threads: int = 2):
+    def __init__(self, path: Path, threads: int = 2, device: str = "auto"):
         import torch
 
         torch.set_num_threads(threads)
+        self.device = torch_device(device)
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
         if checkpoint.get("format") != FORMAT or checkpoint.get("feature_space") != "logmel":
             raise ProjectError("Kein portabler Log-Mel-Teacher; zuerst teacher import mit der Original-Konfiguration")
         self.frontend = Frontend(Parameters(**checkpoint["features"]))
         self.model = network()
         self.model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+        guard = lease("teacher-initialize") if self.device.type == "cuda" else contextlib.nullcontext()
+        with guard:
+            self.model.to(self.device)
         self.model.eval()
         self.metadata = {
             "model": str(path.resolve()),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "feature_space": "logmel",
+            "device": str(self.device),
         }
 
     def __call__(self, samples: np.ndarray) -> dict:
@@ -160,10 +167,11 @@ class Teacher:
 
         features = self.frontend.windows(samples)
         scores = []
-        with torch.inference_mode():
+        guard = lease("teacher-scoring") if self.device.type == "cuda" else contextlib.nullcontext()
+        with guard, torch.inference_mode():
             for start in range(0, len(features), 128):
-                batch = torch.from_numpy(features[start : start + 128]).unsqueeze(1)
-                scores.extend(torch.sigmoid(self.model(batch)).numpy().reshape(-1).tolist())
+                batch = torch.from_numpy(features[start : start + 128]).unsqueeze(1).to(self.device)
+                scores.extend(torch.sigmoid(self.model(batch)).cpu().numpy().reshape(-1).tolist())
         return {
             **self.metadata,
             "peak": float(np.max(scores)),
@@ -172,15 +180,23 @@ class Teacher:
         }
 
 
-def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int = 1337) -> Path:
-    """Separater CPU-Lauf auf geprüften Labels; Prüfaufnahmen bleiben aus dem Optimierer."""
+def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int = 1337, device: str = "auto") -> Path:
+    selected = torch_device(device)
+    guard = lease("teacher-training") if selected.type == "cuda" else contextlib.nullcontext()
+    with guard:
+        return _train(project, epochs, batch_size, seed, selected)
+
+
+def _train(project: Project, epochs: int, batch_size: int, seed: int, device) -> Path:
+    """Geprüfte Labels; Holdouts bleiben aus dem Optimierer. GPU ausdrücklich wählbar."""
     import torch
     from torch.utils.data import DataLoader, TensorDataset
 
     torch.set_num_threads(4)
     torch.manual_seed(seed)
     frontend = Frontend(Parameters())
-    model = network(0.25)
+    model = network(0.25).to(device)
+    print(f"Teacher training device: {device}", flush=True)
 
     def dataset(split):
         positives = audio.wavs(project.recordings / split)
@@ -213,26 +229,30 @@ def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int =
     if train_hashes & eval_hashes:
         raise ProjectError("Teacher-Training verweigert: identischer Inhalt in Training und Bewertung")
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0001)
-    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([ratio]))
+    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([ratio], device=device))
     target = project.path("teacher", "model.pt")
     best, stale, history = float("inf"), 0, []
     for epoch in range(epochs):
         model.train()
-        for features, labels in DataLoader(training, batch_size=batch_size, shuffle=True):
+        for features, labels in DataLoader(
+            training, batch_size=batch_size, shuffle=True, pin_memory=device.type == "cuda"
+        ):
+            features, labels = features.to(device, non_blocking=True), labels.to(device, non_blocking=True)
             optimizer.zero_grad()
             criterion(model(features), labels).backward()
             optimizer.step()
         model.eval()
         total = 0.0
         with torch.inference_mode():
-            for features, labels in DataLoader(validation, batch_size=batch_size):
+            for features, labels in DataLoader(validation, batch_size=batch_size, pin_memory=device.type == "cuda"):
+                features, labels = features.to(device, non_blocking=True), labels.to(device, non_blocking=True)
                 total += float(criterion(model(features), labels)) * len(labels)
         loss = total / len(validation)
         history.append({"epoch": epoch + 1, "validation_loss": loss})
         print(f"Teacher: Epoche {epoch + 1}/{epochs}, Prüfloss {loss:.4f}", flush=True)
         if loss < best:
             best, stale = loss, 0
-            save(target, model, frontend.params, seed=seed, history=history)
+            save(target, model, frontend.params, seed=seed, history=history, training_device=str(device))
         else:
             stale += 1
         if stale >= 6:

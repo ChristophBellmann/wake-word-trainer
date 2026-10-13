@@ -105,11 +105,15 @@ Schwellwert aus dem alten Lab muss auf aktuellen Aufnahmen erneut geprüft
 werden. `teacher score` schreibt Maximum und 95-%-Quantil gleitender Fenster;
 das sind rohe Teacher-Scores, keine kalibrierten Labelwahrscheinlichkeiten.
 
-`teacher train` ist ein separater CPU-Baseline-Lauf auf den freigegebenen
+`teacher train` ist ein separater Baseline-Lauf auf den freigegebenen
 Positiven und Negativen in `recordings/train` und `recordings/negative/train`.
 Bewertungsaufnahmen bleiben aus dem Optimierer und bestimmen den besten
 Checkpoint sowie den Frühstopp. Pro Clip trainiert er mit dem letzten
 1,5-Sekunden-Fenster; die anschließende Bewertung prüft alle gleitenden Fenster.
+`--device gpu` verlangt GPU, `auto` bevorzugt GPU und `--device cpu` erzwingt
+CPU. Die Log-Mel-Aufbereitung bleibt auf CPU; Modell und Optimierer laufen
+auf dem gewählten Gerät. GPU-Arbeit wird mit Student und Benchmarks serialisiert.
+
 Dieser Baseline-Lauf verwendet bislang weder TTS noch externe Korpora oder
 Audio-Augmentation und reproduziert deshalb nicht das vollständige alte
 Teacher-Training. Er aktiviert keinen Teacher-Loss im Student und keinen

@@ -29,6 +29,7 @@ The full documentation is in [docs/](docs/README.md) (also as a [GitBook](https:
 [Pipeline](docs/pipeline.md) ·
 [Evaluation](docs/evaluation.md) ·
 [Lab-Migration und Unterschiede](docs/migration-from-wakeword-lab.md) ·
+[GPU-Training und Benchmarks](docs/gpu-training-and-benchmarks.md) ·
 [Home Assistant service](docs/service.md) ·
 [Automatic deployment](docs/deployment.md) ·
 [Idle-night training](docs/automatic-training.md) ·
@@ -194,6 +195,16 @@ augmentation:
   background_folders: []      # e.g. recordings of your own living room
   rir_folders: []
 training:
+  device: auto                # gpu verlangt GPU, cpu erzwingt CPU
+  engine: standard            # optimized: Graph, Prefetch/TFRecord und Streaming-Validierung
+  input_pipeline: prefetch
+  tfrecord_examples: 65536
+  input_threads: 4
+  compute_threads: 4
+  prefetch_batches: 2
+  validation_cache_mb: 512
+  validation_batch_size: 1024
+  progress_interval: 25
   seed: null                 # optional integer: augmentation, sampling and model initialization
   model_profile: esphome_v2_like  # also current and current_wider
   time_mask_max_size: 0

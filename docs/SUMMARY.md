@@ -15,6 +15,7 @@
 * [Better models: more data, fewer false activations](better-models.md)
 * [Positive, Negative und Fehlaktivierungen prüfen](data-audit.md)
 * [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md)
+* [GPU-Training und Benchmarks](gpu-training-and-benchmarks.md)
 * [Replacing a model you already use](replacing-a-model.md)
 
 ## Home Assistant

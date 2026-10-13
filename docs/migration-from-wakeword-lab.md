@@ -39,7 +39,7 @@ in private Projektordner.
 | Prüfung mit STT | Einzelne Diagnose-/Extraktionswerkzeuge | Clip-Extraktion, keine gemeinsame Quellenprüfung | `audit`: Positive, Negative und unbeschriftete Auslösungen mit unabhängiger STT sowie optional Student und Teacher prüfen; keine automatische Labeländerung. |
 | Mining | Spätere automatische Mining-Kampagnen verschlechterten das Modell | Optionales Mining, Standard null | Standard null behalten; im Vergleichsprojekt aus. Bestätigte reale Fehlaktivierungen gezielt als Negative sammeln. |
 | Bewertung und Ausrollen | Threshold-Sweeps, FAPH-Berichte, ESP-Hardwaretest | 256 Cutoffs, gleiche Prüfaufnahmen, Parity-Gate und Collector-Rollout bereits vorhanden | Vorhandene öffentliche Werkzeuge verwenden. Alte FAPH-Zahlen sind wegen anderer Daten und Betriebsbedingungen keine direkte Messung heutiger Geräte. |
-| Leistungsdiagnose | Power-Monitor, GPU-Benchmarks, Feature-/Score-Caches und viele ROCm-Spezialpatches | Ressourcenprüfung und eigene GPU-Prozessverwaltung | Bestehende Ressourcenverwaltung erhalten. Alte Maschinen-, Pfad- und ROCm-spezifische Optimierungen sind kein erforderlicher Bestandteil der Datenmigration. |
+| Leistungsdiagnose | Power-Monitor, GPU-Benchmarks, Feature-/Score-Caches und viele ROCm-Spezialpatches | Ressourcenprüfung und eigene GPU-Prozessverwaltung | [GPU-Benchmark-System](gpu-training-and-benchmarks.md), Graph-Kern, TFRecord/Prefetch und vollständiger Validierungs-Cache sind ergänzt und auf echten Features gemessen. Alte Maschinenpfade und instabile automatische RAM-Caches bleiben abgelöst. |
 
 ## Daten übernehmen
 

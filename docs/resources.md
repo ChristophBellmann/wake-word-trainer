@@ -1,5 +1,8 @@
 # Sharing the GPU and checking resources
 
+Für Gerätewahl, optimierten Trainingskern und Messungen:
+[GPU-Training und reproduzierbare Benchmarks](gpu-training-and-benchmarks.md).
+
 ## Pause other GPU services
 
 When an LLM or GPU TTS runs on the training computer as well, list their

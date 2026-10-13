@@ -12,6 +12,7 @@ from pathlib import Path
 
 import yaml
 
+from .gpu import environment
 from .project import Project, ProjectError
 
 # MixedNet as used for the official ESPHome models.
@@ -102,6 +103,22 @@ def feature_sets(project: Project, downloads: Path) -> list[dict]:
 def config(project: Project, downloads: Path) -> dict:
     settings = project.config["training"]
     return {
+        **{
+            key: settings[key]
+            for key in (
+                "device",
+                "engine",
+                "input_pipeline",
+                "tfrecord_examples",
+                "input_threads",
+                "compute_threads",
+                "prefetch_batches",
+                "validation_cache_mb",
+                "validation_batch_size",
+                "progress_interval",
+                "seed",
+            )
+        },
         "window_step_ms": 10,
         "train_dir": str(project.model_dir),
         "features": feature_sets(project, downloads),
@@ -135,7 +152,13 @@ def _stream(command: list[str], log_path: Path, on_step: Callable[[int], None] |
     """Run microWakeWord, echo and log its output, report training steps as they pass."""
     with log_path.open("a", encoding="utf-8") as log:
         process = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            bufsize=1,
+            env=environment(),
         )
         assert process.stdout is not None
         for line in process.stdout:
@@ -185,6 +208,8 @@ def train(
         "faulthandler",
         "-m",
         "wake_word_trainer.training_worker",
+        "--runtime",
+        str(config_path),
         f"--training_config={config_path}",
         "--train",
         "1",
@@ -206,7 +231,8 @@ def train(
     ]
     seed = project.config["training"].get("seed")
     if project.config["training"]["early_stopping_patience"] or project.config["training"]["lr_patience"]:
-        command[5:5] = ["--control"]
+        if project.config["training"]["engine"] == "standard":
+            command[5:5] = ["--control"]
     if seed is not None:
         command[5:5] = ["--seed", str(seed)]
     model = project.model_dir / TFLITE

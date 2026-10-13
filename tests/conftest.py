@@ -84,3 +84,4 @@ def free_system(monkeypatch, request):
         return
     monkeypatch.setattr("wake_word_trainer.system_check.memory", lambda: {"available_memory_gb": 64.0})
     monkeypatch.setattr("wake_word_trainer.system_check.load_per_cpu", lambda: 0.1)
+    monkeypatch.setattr("wake_word_trainer.gpu.busy", lambda: False)
