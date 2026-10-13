@@ -83,6 +83,8 @@ def free_system(monkeypatch, request):
     """Service tests must not depend on the memory and load of the computer running them."""
     if "real_system" in request.keywords:
         return
+    for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES"):
+        monkeypatch.setenv(key, "-1")
     monkeypatch.setattr("wake_word_trainer.system_check.memory", lambda: {"available_memory_gb": 64.0})
     monkeypatch.setattr("wake_word_trainer.system_check.load_per_cpu", lambda: 0.1)
     monkeypatch.setattr("wake_word_trainer.gpu.busy", lambda: False)
