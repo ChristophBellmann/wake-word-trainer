@@ -10,6 +10,7 @@ set whenever there are any; synthetic speech then only trains.
 
 from __future__ import annotations
 
+import json
 import random
 import shutil
 from collections.abc import Callable, Iterable, Iterator
@@ -96,8 +97,20 @@ def write_mmap(target: Path, generator: Iterator[np.ndarray]) -> int:
     return count
 
 
-def _holdout(clips: list[Path], share: float = 0.1) -> tuple[list[Path], list[Path], list[Path]]:
+def _holdout(
+    clips: list[Path], share: float = 0.1, hashes: dict | None = None
+) -> tuple[list[Path], list[Path], list[Path]]:
     """Deterministic train/validation/test split for synthetic-only projects."""
+    from .datasets import digest
+
+    unique = {}
+    for path in clips:
+        sha = (hashes or {}).get(str(path)) or digest(path)
+        unique.setdefault(sha, path)
+    clips = [unique[sha] for sha in sorted(unique)]
+    random.Random(1337).shuffle(clips)
+    if share <= 0:
+        return clips, [], []
     held = max(1, int(len(clips) * share)) if len(clips) >= 3 else 0
     return clips[2 * held :], clips[:held], clips[held : 2 * held]
 
@@ -119,6 +132,13 @@ def speech_clips(project: Project, downloads: Path) -> list[Path]:
 
 
 def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]:
+    from .datasets import preflight
+
+    preflight(project)
+    hashes = {
+        row["path"]: row["sha256"]
+        for row in (json.loads(line) for line in project.path("dataset-manifest.jsonl").read_text().splitlines())
+    }
     seed = project.config["training"].get("seed")
     if seed is not None:
         random.seed(seed)
@@ -133,6 +153,11 @@ def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]
     negative_train = [path for path in negative_train if path.parent.name == LOCAL]
     negative_eval = audio.wavs(recordings / "negative" / "eval")
     tts_pos = audio.wavs(project.path("tts", "positive"))
+    minimum = float(project.config["tts"]["min_positive_duration_seconds"])
+    if minimum:
+        kept = [path for path in tts_pos if len(audio.read(path)) / audio.RATE >= minimum]
+        log(f"TTS-Dauerfilter: {len(tts_pos) - len(kept)} zu kurze Positive ausgeschlossen")
+        tts_pos = kept
     tts_neg = audio.wavs(project.path("tts", "negative"))
     if not (own_train or own_hard or tts_pos):
         raise ProjectError("Nothing to train on: run fetch and/or generate first")
@@ -147,7 +172,20 @@ def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]
             return
         log(f"Features {name}/{split}: {len(clips)} clips x {times}")
         counts[f"{name}/{split}"] = write_mmap(
-            root / name / split / f"{name}_mmap", spectrograms(clips, augments[random_window], times, slide)
+            root / name / split / f"{name}_mmap",
+            spectrograms(
+                clips,
+                None
+                if split != "training"
+                or (
+                    name
+                    in {"own_negative", "satellite_negative", "speech_extra", "background_negative", "tts_negative"}
+                    and not project.config["augmentation"]["augment_negatives"]
+                )
+                else augments[random_window],
+                times,
+                slide,
+            ),
         )
 
     # Mined false activations (features/mined) belong to earlier rounds and stay.
@@ -161,13 +199,24 @@ def build(project: Project, downloads: Path, log: Log = print) -> dict[str, int]
     make("satellite_negative", "training", satellite_train, max(1, repeat // 2), 1, random_window=True)
     make("own_negative", "validation", negative_eval, 1, 1, random_window=True)
     make("own_negative", "testing", negative_eval, 1, 1, random_window=True)
-    make("speech_extra", "training", speech_clips(project, downloads), 1, 1, random_window=True)
+    speech = speech_clips(project, downloads)
+    random.Random(1337).shuffle(speech)
+    train, validation, test = _holdout(speech, float(project.config["negatives"]["eval_share"]), hashes)
+    make("speech_extra", "training", train, 1, 1, random_window=True)
+    make("speech_extra", "validation", validation, 1, 1, random_window=True)
+    make("speech_extra", "testing", test, 1, 1, random_window=True)
+    background_negatives = audio.wavs(*[project.resolve(p) for p in project.config["negatives"]["background_folders"]])
+    random.Random(1337).shuffle(background_negatives)
+    train, validation, test = _holdout(background_negatives, float(project.config["negatives"]["eval_share"]), hashes)
+    make("background_negative", "training", train, 1, 1, random_window=True)
+    make("background_negative", "validation", validation, 1, 1, random_window=True)
+    make("background_negative", "testing", test, 1, 1, random_window=True)
     if own_eval:
         make("own", "validation", own_eval, 1, 10)
         make("own", "testing", own_eval, 1, 1)
         make("tts", "training", tts_pos, 2, 10)
     else:
-        train, validation, test = _holdout(tts_pos)
+        train, validation, test = _holdout(tts_pos, hashes=hashes)
         make("tts", "training", train, 2, 10)
         make("tts", "validation", validation, 1, 10)
         make("tts", "testing", test, 1, 1)

@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from . import audio
-from .extraction import find_phrases
+from .extraction import tokens
 from .project import Project, ProjectError
 from .recordings import split_for
 
@@ -52,6 +52,16 @@ def findings(labels: set[str], matches: list[dict], words: list[dict], scores: l
     if "positive" in labels and any(s["peak"] <= s["cutoff"] for s in scores):
         result.append("missed_positive")
     return result
+
+
+def transcript_matches(text: str, phrases: list[str]) -> list[dict]:
+    """Vollständige Wörter prüfen, unabhängig von fehlerhaften STT-Wortzeiten."""
+    words = tokens(text)
+    found = []
+    for phrase in sorted({tuple(tokens(p)) for p in phrases if tokens(p)}):
+        if any(tuple(words[i : i + len(phrase)]) == phrase or words[i] == "".join(phrase) for i in range(len(words))):
+            found.append({"phrase": " ".join(phrase), "source": "transcript"})
+    return found
 
 
 class Recognizer:
@@ -121,6 +131,7 @@ def run(
     models: list[Path] | None = None,
     phrases: list[str] | None = None,
     threads: int = 4,
+    teachers: list[Path] | None = None,
 ) -> dict:
     """Schreibt private JSONL-Berichte; wiederholt nur geänderte/fehlgeschlagene Clips."""
     items = inventory(project, extra)
@@ -129,13 +140,21 @@ def run(
     output.mkdir(parents=True, exist_ok=True)
     phrases = list(dict.fromkeys([project.config["wake_word"], *project.config["tts"]["phrases"], *(phrases or [])]))
     scorers = [Scorer(path, int(project.config["evaluation"]["sliding_window_size"])) for path in models or []]
+    if teachers:
+        from .teacher import Teacher
+
+        teacher_scorers = [Teacher(path) for path in teachers]
+    else:
+        teacher_scorers = []
     config = {
         "stt_model": stt_model,
         "language": project.config["language"],
         "phrases": phrases,
         "models": [s.metadata for s in scorers],
-        "version": 1,
+        "version": 2,
     }
+    if teacher_scorers:
+        config["teachers"] = [s.metadata for s in teacher_scorers]
     signature = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     cache = {}
     report = output / "clips.jsonl"
@@ -168,8 +187,9 @@ def run(
                         duration_seconds=len(samples) / audio.RATE,
                         transcript=transcript,
                         words=words,
-                        matches=find_phrases(words, phrases, len(samples) / audio.RATE, {}),
+                        matches=transcript_matches(transcript, phrases),
                         scores=[s(samples) for s in scorers],
+                        teachers=[s(samples) for s in teacher_scorers],
                     )
                 except Exception as err:
                     row["error"] = f"{type(err).__name__}: {err}"

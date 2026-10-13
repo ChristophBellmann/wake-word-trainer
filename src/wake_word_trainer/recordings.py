@@ -161,8 +161,19 @@ def fetch(project: Project) -> FetchResult:
         wanted[root / "negative" / split_for(_sha256(data), share) / device / filename] = data
 
     result = FetchResult()
+    # Explizit importierte Rollen und Holdouts bleiben bei Collector-Sync erhalten.
+    imported = set()
+    provenance = project.path("dataset-import.jsonl")
+    if provenance.is_file():
+        for line in provenance.read_text(encoding="utf-8").splitlines():
+            item = json.loads(line)
+            path = Path(item["target"])
+            if path.is_relative_to(root) and path.is_file():
+                if _sha256(path.read_bytes()) != item["sha256"]:
+                    raise ProjectError(f"Importierte Aufnahme verändert: {path}")
+                imported.add(path)
     for path in audio.wavs(root):
-        if path not in wanted:
+        if path not in wanted and path not in imported:
             path.unlink()
             result.removed += 1
     for path, data in wanted.items():

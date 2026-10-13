@@ -9,7 +9,9 @@ for personal, non-commercial use, as the microWakeWord documentation does.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import shutil
 import tarfile
 import urllib.parse
@@ -25,6 +27,7 @@ from . import audio
 HF = "https://huggingface.co"
 
 NEGATIVE_SETS = ("speech", "dinner_party", "no_speech", "dinner_party_eval")
+ALL_NEGATIVE_SETS = (*NEGATIVE_SETS, "speech_background", "dinner_party_background", "no_speech_background")
 NEGATIVE_REPO = "kahrendt/microwakeword"
 RIR_REPO = "davidscripka/MIT_environmental_impulse_responses"
 RIR_FOLDER = "16khz"
@@ -47,6 +50,13 @@ SPEECH_PRESETS = {
         "pl": "polish",
     }.items()
 }
+SPEECH_PRESETS.update(
+    {
+        "voxpopuli_de": ("facebook/voxpopuli", ("de/train-",)),
+        "voxpopuli_en": ("facebook/voxpopuli", ("en/train-",)),
+        "librispeech_en": ("openslr/librispeech_asr", ("clean/train.100/",)),
+    }
+)
 
 Log = Callable[[str], None]
 
@@ -92,10 +102,12 @@ def _mark_done(folder: Path) -> None:
     (folder / ".complete").write_text("ok\n")
 
 
-def negative_features(downloads: Path, log: Log = print, base: str = HF) -> Path:
+def negative_features(downloads: Path, log: Log = print, base: str = HF, sets=NEGATIVE_SETS) -> Path:
     """Pre-computed spectrograms of speech, music and noise (microWakeWord)."""
     target = downloads / "negative_datasets"
-    for name in NEGATIVE_SETS:
+    for name in sets:
+        if name not in ALL_NEGATIVE_SETS:
+            raise ValueError(f"Unknown negative dataset: {name}")
         if _done(target / name):
             continue
         archive = _fetch(_dataset_file(NEGATIVE_REPO, f"{name}.zip", base), downloads / "archives" / f"{name}.zip", log)
@@ -139,14 +151,25 @@ def background(downloads: Path, log: Log = print, base: str = HF) -> Path:
     return target
 
 
-def speech(preset: str, downloads: Path, clips: int, log: Log = print, base: str = HF) -> Path:
+def speech(preset: str, downloads: Path, clips: int, log: Log = print, base: str = HF, exclude_phrases=()) -> Path:
     """Up to `clips` utterances of a speech preset as 16 kHz WAVs in downloads/speech/<preset>."""
     if preset not in SPEECH_PRESETS:
         raise ValueError(f"Unknown speech preset {preset!r}; known: {', '.join(sorted(SPEECH_PRESETS))}")
     repo, words = SPEECH_PRESETS[preset]
     target = downloads / "speech" / preset
-    if _done(target) or len(audio.wavs(target)) >= clips:
+    signature = {"clips": clips, "exclude_phrases": sorted(exclude_phrases), "version": 2}
+    stamp = target / ".complete"
+    if stamp.is_file() and stamp.read_text() == json.dumps(signature, sort_keys=True):
         return target
+    if len(audio.wavs(target)) >= clips and not exclude_phrases:
+        return target
+    if stamp.is_file() and exclude_phrases:
+        try:
+            previous = json.loads(stamp.read_text())
+        except ValueError:
+            previous = {}
+        if previous.get("exclude_phrases") != signature["exclude_phrases"] or previous.get("version") != 2:
+            raise ValueError(f"Speech source {preset}: transcript filter differs or is unverified; use a new folder")
     files = sorted(
         path for path in _tree(repo, "", base) if path.endswith(".parquet") and all(word in path for word in words)
     )
@@ -157,32 +180,47 @@ def speech(preset: str, downloads: Path, clips: int, log: Log = print, base: str
         if count >= clips:
             break
         archive = _fetch(_dataset_file(repo, path, base), downloads / "archives" / repo.replace("/", "_") / path, log)
-        count = _parquet_to_wav(archive, target, count, clips)
+        count = _parquet_to_wav(archive, target, count, clips, exclude_phrases)
         archive.unlink()
-    _mark_done(target)
+    target.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(json.dumps(signature, sort_keys=True))
     return target
 
 
-def _parquet_to_wav(path: Path, target: Path, count: int, limit: int) -> int:
+def _parquet_to_wav(path: Path, target: Path, count: int, limit: int, exclude_phrases=()) -> int:
     import io
 
     import pyarrow.parquet as pq  # comes with the train extra (datasets)
     import soundfile
 
     target.mkdir(parents=True, exist_ok=True)
-    table = pq.read_table(str(path), columns=["audio"])
-    for cell in table.column("audio").to_pylist():
+    fields = pq.read_schema(path).names
+    text_keys = [key for key in ("text", "transcript", "sentence", "normalized_text", "raw_text") if key in fields]
+    table = pq.read_table(str(path), columns=["audio", *text_keys])
+
+    def words(text):
+        return re.findall(r"[^\W_]+", text.casefold())
+
+    blocked = [words(phrase) for phrase in exclude_phrases]
+    for row in table.to_pylist():
         if count >= limit:
             break
+        tokens = words(" ".join(str(row.get(key) or "") for key in text_keys))
+        if any(phrase and any(tokens[i : i + len(phrase)] == phrase for i in range(len(tokens))) for phrase in blocked):
+            continue
+        cell = row["audio"]
         data = cell.get("bytes") if isinstance(cell, dict) else None
         if not data:
+            continue
+        name = hashlib.sha256(data).hexdigest() + ".wav"
+        if (target / name).is_file():
             continue
         try:
             samples, rate = soundfile.read(io.BytesIO(data), dtype="float32", always_2d=True)
         except Exception:  # a broken file in a large set is skipped
             continue
         mono = samples.mean(axis=1)
-        audio.write(target / f"{count:06d}.wav", _resample(mono, rate))
+        audio.write(target / name, _resample(mono, rate))
         count += 1
     return count
 

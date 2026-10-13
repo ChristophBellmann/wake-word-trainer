@@ -79,3 +79,42 @@ nachweislich zuverlässiger ist. Seine Fehlentscheidungen automatisch als
 Labels zu übernehmen würde sie im nächsten Modell festigen. Ein Teacher-
 Neutraining sollte deshalb auf geprüften Labels basieren und auf getrennten
 heutigen Satellitenaufnahmen bewertet werden.
+
+## Portabler Teacher
+
+Das zusätzliche Extra `teacher` installiert PyTorch. Der Teacher hat ein
+eigenes Log-Mel-Frontend; Microfrontend-MMAPs des Students dürfen ihm nicht
+übergeben werden. Beim Import werden Architektur, Gewichte und die
+Feature-Parameter aus der ursprünglichen YAML gemeinsam gespeichert. Die
+alte Konfiguration wird danach nicht mehr benötigt.
+
+```bash
+wake-word-trainer -p my_project teacher import /private/lab/best_model.pt \
+  --config /private/lab/teacher.yaml --output teacher/legacy.pt
+wake-word-trainer -p my_project audit --teacher teacher/legacy.pt \
+  --unlabelled-folder activation_clips
+wake-word-trainer -p my_project teacher train --epochs 30 --seed 1337
+wake-word-trainer -p my_project teacher score --model teacher/model.pt \
+  --folder activation_clips --output teacher/scores.json
+```
+
+Importiert werden ausschließlich kompatible Log-Mel-v2-Gewichte. Eine
+Legacy-Konfiguration mit `negative_mmap_roots` wird verweigert: Diese Modelle
+können mit unterschiedlichen Feature-Räumen trainiert worden sein. Ein
+Schwellwert aus dem alten Lab muss auf aktuellen Aufnahmen erneut geprüft
+werden. `teacher score` schreibt Maximum und 95-%-Quantil gleitender Fenster;
+das sind rohe Teacher-Scores, keine kalibrierten Labelwahrscheinlichkeiten.
+
+`teacher train` ist ein separater CPU-Baseline-Lauf auf den freigegebenen
+Positiven und Negativen in `recordings/train` und `recordings/negative/train`.
+Bewertungsaufnahmen bleiben aus dem Optimierer und bestimmen den besten
+Checkpoint sowie den Frühstopp. Pro Clip trainiert er mit dem letzten
+1,5-Sekunden-Fenster; die anschließende Bewertung prüft alle gleitenden Fenster.
+Dieser Baseline-Lauf verwendet bislang weder TTS noch externe Korpora oder
+Audio-Augmentation und reproduziert deshalb nicht das vollständige alte
+Teacher-Training. Er aktiviert keinen Teacher-Loss im Student und keinen
+Rollout. Erst der Vergleich auf heutigen Satellitenaufnahmen entscheidet,
+ob er als zusätzliche Prüfstimme hilft.
+
+Für Herkunft, sichere Datenübernahme und getrennte Seed-Läufe:
+[Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md).

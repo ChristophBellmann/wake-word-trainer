@@ -35,6 +35,19 @@ MODEL_ARGS = [
 TFLITE = Path("tflite_stream_state_internal_quant") / "stream_state_internal_quant.tflite"
 
 
+def model_args(profile: str) -> list[str]:
+    args = list(MODEL_ARGS)
+    if profile in {"current", "current_wider"}:
+        values = {
+            "--pointwise_filters": "40,40,40,40" if profile == "current_wider" else "32,32,32,32",
+            "--first_conv_filters": "20" if profile == "current_wider" else "16",
+            "--mixconv_kernel_sizes": "[5],[7],[9],[13]",
+        }
+        for key, value in values.items():
+            args[args.index(key) + 1] = value
+    return args
+
+
 def _feature_set(path: Path, weight: float, truth: bool, strategy: str) -> dict:
     return {
         "features_dir": str(path),
@@ -56,6 +69,7 @@ def feature_sets(project: Project, downloads: Path) -> list[dict]:
         ("own_negative", False, "random"),
         ("satellite_negative", False, "random"),
         ("speech_extra", False, "random"),
+        ("background_negative", False, "random"),
         ("mined", False, "random"),
         ("tts_negative", False, "random"),
     ):
@@ -63,9 +77,18 @@ def feature_sets(project: Project, downloads: Path) -> list[dict]:
             weight = weights.get(name, weights["own_negative"])
             sets.append(_feature_set(project.features / name, weight, truth, strategy))
     negatives = downloads / "negative_datasets"
-    for name in ("speech", "dinner_party", "no_speech"):
+    for name in project.config["negatives"]["feature_sets"]:
+        if name == "dinner_party_eval":
+            continue
         if (negatives / name).is_dir():
-            sets.append(_feature_set(negatives / name, weights[name], False, "random"))
+            sets.append(
+                _feature_set(
+                    negatives / name,
+                    weights.get(name, weights.get(name.removesuffix("_background"), 5.0)),
+                    False,
+                    "random",
+                )
+            )
     if (negatives / "dinner_party_eval").is_dir():
         # Long background recordings: only for false activations per hour in validation and test.
         sets.append(_feature_set(negatives / "dinner_party_eval", 0.0, False, "split"))
@@ -86,11 +109,17 @@ def config(project: Project, downloads: Path) -> dict:
         "positive_class_weight": [float(settings["positive_class_weight"])],
         "negative_class_weight": [float(settings["negative_class_weight"])],
         "learning_rates": [float(settings["learning_rate"])],
+        "early_stopping_patience": int(settings["early_stopping_patience"]),
+        "early_stopping_min_delta": float(settings["early_stopping_min_delta"]),
+        "lr_patience": int(settings["lr_patience"]),
+        "lr_factor": float(settings["lr_factor"]),
+        "lr_max_reductions": int(settings["lr_max_reductions"]),
+        "min_learning_rate": float(settings["min_learning_rate"]),
         "batch_size": int(settings["batch_size"]),
-        "time_mask_max_size": [0],
-        "time_mask_count": [0],
-        "freq_mask_max_size": [0],
-        "freq_mask_count": [0],
+        "time_mask_max_size": [int(settings["time_mask_max_size"])],
+        "time_mask_count": [int(settings["time_mask_count"])],
+        "freq_mask_max_size": [int(settings["freq_mask_max_size"])],
+        "freq_mask_count": [int(settings["freq_mask_count"])],
         "eval_step_interval": int(settings["eval_step_interval"]),
         "clip_duration_ms": int(settings["clip_duration_ms"]),
         "target_minimization": 0.9,
@@ -126,6 +155,25 @@ def train(
     runner=None,
     on_step: Callable[[int], None] | None = None,
 ) -> Path:
+    if runner is None:
+        from .datasets import check_features
+
+        roots = [
+            project.features / name
+            for name in (
+                "own",
+                "own_hard",
+                "tts",
+                "own_negative",
+                "satellite_negative",
+                "speech_extra",
+                "background_negative",
+                "mined",
+                "tts_negative",
+            )
+        ]
+        roots += [downloads / "negative_datasets" / name for name in project.config["negatives"]["feature_sets"]]
+        check_features(roots)
     if not resume:
         # microWakeWord creates the folder itself and refuses an existing one unless it resumes.
         shutil.rmtree(project.model_dir, ignore_errors=True)
@@ -154,9 +202,11 @@ def train(
         "1",
         "--use_weights",
         "best_weights",
-        *MODEL_ARGS,
+        *model_args(project.config["training"]["model_profile"]),
     ]
     seed = project.config["training"].get("seed")
+    if project.config["training"]["early_stopping_patience"] or project.config["training"]["lr_patience"]:
+        command[5:5] = ["--control"]
     if seed is not None:
         command[5:5] = ["--seed", str(seed)]
     model = project.model_dir / TFLITE

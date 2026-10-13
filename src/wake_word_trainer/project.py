@@ -43,7 +43,14 @@ DEFAULTS: dict[str, Any] = {
     },
     # More speech the model must ignore, e.g. in your language (16 kHz WAV folders or
     # downloaded presets, see `download --speech`).
-    "negatives": {"speech_folders": [], "speech_presets": [], "speech_clips": 6000},
+    "negatives": {
+        "speech_folders": [],
+        "background_folders": [],
+        "speech_presets": [],
+        "speech_clips": 6000,
+        "eval_share": 0.05,
+        "feature_sets": ["speech", "dinner_party", "no_speech", "dinner_party_eval"],
+    },
     "tts": {
         # Piper voices (.onnx with .onnx.json beside it), relative to the project or absolute.
         "voices": [],
@@ -54,11 +61,13 @@ DEFAULTS: dict[str, Any] = {
         "negative_phrases": [],
         "negative_samples": 1000,
         "length_scales": [0.8, 0.9, 1.0, 1.1, 1.2],
+        "min_positive_duration_seconds": 0.0,
     },
     "augmentation": {
         "background_probability": 0.25,
         "background_min_snr_db": 6,
         "background_max_snr_db": 22,
+        "augment_negatives": True,
         "rir_probability": 0.3,
         # Your own background recordings or impulse responses, in addition to the downloads.
         "background_folders": [],
@@ -66,9 +75,20 @@ DEFAULTS: dict[str, Any] = {
     },
     "training": {
         "seed": None,  # optional reproducible augmentation, sampling and model initialization
+        "model_profile": "esphome_v2_like",
+        "time_mask_max_size": 0,
+        "time_mask_count": 0,
+        "freq_mask_max_size": 0,
+        "freq_mask_count": 0,
         "steps": 20000,
         "batch_size": 128,
         "learning_rate": 0.001,
+        "early_stopping_patience": 0,
+        "early_stopping_min_delta": 0.0,
+        "lr_patience": 0,
+        "lr_factor": 0.5,
+        "lr_max_reductions": 3,
+        "min_learning_rate": 0.00001,
         "positive_class_weight": 1.0,
         "negative_class_weight": 20.0,
         # How often each own training recording is augmented differently.
@@ -82,6 +102,7 @@ DEFAULTS: dict[str, Any] = {
             # activations): own share, so a large local negative folder cannot dilute them.
             "satellite_negative": 4.0,
             "speech_extra": 5.0,
+            "background_negative": 5.0,
             "mined": 4.0,
             "tts": 2.0,
             "tts_negative": 3.0,
@@ -210,6 +231,27 @@ class Project:
         seed = config["training"].get("seed")
         if seed is not None and (type(seed) is not int or not 0 <= seed < 2**32):
             raise ProjectError("training.seed must be null or an integer in 0..4294967295")
+        if config["training"]["model_profile"] not in {"esphome_v2_like", "current", "current_wider"}:
+            raise ProjectError("training.model_profile: esphome_v2_like, current oder current_wider erforderlich")
+        for key in ("time_mask_max_size", "time_mask_count", "freq_mask_max_size", "freq_mask_count"):
+            if not 0 <= int(config["training"][key]) <= 100:
+                raise ProjectError(f"training.{key} muss zwischen 0 und 100 liegen")
+        if float(config["tts"]["min_positive_duration_seconds"]) < 0:
+            raise ProjectError("tts.min_positive_duration_seconds muss mindestens null sein")
+        if not 0 <= float(config["negatives"]["eval_share"]) < 0.5:
+            raise ProjectError("negatives.eval_share muss zwischen 0 und 0,5 liegen")
+        from .downloads import ALL_NEGATIVE_SETS
+
+        if not set(config["negatives"]["feature_sets"]).issubset(ALL_NEGATIVE_SETS):
+            raise ProjectError("negatives.feature_sets enthält eine unbekannte MMAP-Quelle")
+        if any(int(config["training"][key]) < 0 for key in ("early_stopping_patience", "lr_patience")):
+            raise ProjectError("Trainings-Patience muss mindestens null sein")
+        if not 0 < float(config["training"]["lr_factor"]) < 1:
+            raise ProjectError("training.lr_factor muss zwischen null und eins liegen")
+        if float(config["training"]["early_stopping_min_delta"]) < 0:
+            raise ProjectError("training.early_stopping_min_delta muss mindestens null sein")
+        if int(config["training"]["lr_max_reductions"]) < 0 or float(config["training"]["min_learning_rate"]) < 0:
+            raise ProjectError("LR-Absenkungsgrenze und minimale Lernrate müssen mindestens null sein")
 
         deployment = config["deployment"]
         if deployment["enabled"]:

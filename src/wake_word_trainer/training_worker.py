@@ -10,11 +10,18 @@ import sys
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--control", action="store_true")
     args, remaining = parser.parse_known_args()
     if args.seed is not None:
         import tensorflow as tf
 
         tf.keras.utils.set_random_seed(args.seed)
+    if args.control:
+        import microwakeword.train as backend
+
+        from .training_control import install
+
+        install(backend)
     sys.argv = ["microwakeword.model_train_eval", *remaining]
     runpy.run_module("microwakeword.model_train_eval", run_name="__main__")
 

@@ -34,11 +34,17 @@ def cmd_download(args: argparse.Namespace) -> None:
         print(f"Voice {path}; add it to tts.voices in wakeword.yaml")
     for preset in args.speech or []:
         clips = int(project.config["negatives"]["speech_clips"])
-        path = downloads.speech(preset, target, clips)
+        path = downloads.speech(
+            preset, target, clips, exclude_phrases=[project.config["wake_word"], *project.config["tts"]["phrases"]]
+        )
         print(f"Speech {path}; add {preset!r} to negatives.speech_presets in wakeword.yaml")
     if (args.voice or args.speech) and not args.data:
         return
-    downloads.negative_features(target)
+    sets = args.negative_set or project.config["negatives"]["feature_sets"]
+    downloads.negative_features(target, sets=sets)
+    if args.negative_set:
+        project.config["negatives"]["feature_sets"] = sets
+        project.path("wakeword.yaml").write_text(project.render_config(), encoding="utf-8")
     downloads.room_impulses(target)
     downloads.background(target)
     print(f"Shared data ready in {target}")
@@ -52,6 +58,30 @@ def cmd_fetch(args: argparse.Namespace) -> None:
     print(f"Recordings: {result}")
     if result.eval < 5:
         print("Hint: fewer than 5 held-out recordings make the evaluation unreliable; record more.")
+
+
+def cmd_data(args: argparse.Namespace) -> None:
+    from .datasets import import_sources, preflight
+
+    project = Project.load(args.project)
+    result = (
+        import_sources(project, Path(args.manifest).expanduser().resolve(), args.dry_run)
+        if args.data_command == "import"
+        else preflight(project, rehash=args.rehash)
+    )
+    print(json.dumps(result, ensure_ascii=False))
+
+
+def cmd_experiment(args: argparse.Namespace) -> None:
+    from .experiments import prepare, run
+
+    project = Project.load(args.project)
+    output = project.resolve(args.output)
+    if args.experiment_command == "prepare":
+        projects = prepare(project, output, args.seed, args.model_profile)
+        print(f"{len(projects)} unabhängige Läufe vorbereitet: {output}")
+    else:
+        print(f"{len(run(output, _downloads(project, args)))} Läufe bewertet: {output / 'results.json'}")
 
 
 def cmd_audit(args: argparse.Namespace) -> None:
@@ -71,11 +101,41 @@ def cmd_audit(args: argparse.Namespace) -> None:
         [project.resolve(path) for path in args.model],
         args.phrase,
         args.threads,
+        [project.resolve(path) for path in args.teacher],
     )
     print(f"{result['unique_clips']} Aufnahmen geprüft; Labels unverändert. Bericht: {project.resolve(args.output)}")
     print(json.dumps(result["findings"], ensure_ascii=False))
     if result["findings"].get("processing_error"):
         raise ProjectError("Einzelne Aufnahmen konnten nicht geprüft werden; Details stehen im privaten Bericht")
+
+
+def cmd_teacher(args: argparse.Namespace) -> None:
+    from .teacher import Teacher, import_checkpoint, train
+
+    project = Project.load(args.project)
+    if args.teacher_command == "import":
+        target = project.resolve(args.output)
+        import_checkpoint(project.resolve(args.checkpoint), project.resolve(args.config), target)
+        print(f"Portabler Teacher: {target}")
+    elif args.teacher_command == "train":
+        print(f"Teacher gespeichert: {train(project, args.epochs, args.batch_size, args.seed)}")
+    else:
+        from . import audio
+        from .audit import inventory
+
+        scorer = Teacher(project.resolve(args.model), args.threads)
+        rows = []
+        for item in inventory(project, [("unlabelled", project.resolve(p)) for p in args.folder]):
+            rows.append({**item, "teacher": scorer(audio.read(item["sources"][0]["path"]))})
+            if len(rows) % 25 == 0:
+                print(f"Teacher: {len(rows)} Aufnahmen bewertet", flush=True)
+        target = project.resolve(args.output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps({"model": scorer.metadata, "clips": rows}, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        target.chmod(0o600)
+        print(f"{len(rows)} Teacher-Bewertungen: {target}")
 
 
 def cmd_generate(args: argparse.Namespace) -> None:
@@ -237,7 +297,10 @@ COMMANDS = {
     "init": cmd_init,
     "download": cmd_download,
     "fetch": cmd_fetch,
+    "data": cmd_data,
+    "experiment": cmd_experiment,
     "audit": cmd_audit,
+    "teacher": cmd_teacher,
     "generate": cmd_generate,
     "features": cmd_features,
     "train": cmd_train,
@@ -271,16 +334,50 @@ def parser() -> argparse.ArgumentParser:
         "--speech", action="append", help="more negative speech, e.g. mls_de (German audio books; repeatable)"
     )
     download.add_argument("--data", action="store_true", help="with --voice/--speech: also the shared data")
+    download.add_argument("--negative-set", action="append", help="MMAP-Negativquelle, auch *_background; wiederholbar")
 
     sub.add_parser("fetch", help="own recordings from the collector and recordings.folders")
+    data = sub.add_parser("data", help="Datenquellen mit Rollen übernehmen und vor dem Training prüfen")
+    data_sub = data.add_subparsers(dest="data_command", required=True)
+    data_import = data_sub.add_parser("import")
+    data_import.add_argument("manifest", help="YAML mit sources: [{folder, role}]")
+    data_import.add_argument("--dry-run", action="store_true")
+    data_check = data_sub.add_parser("check")
+    data_check.add_argument("--rehash", action="store_true", help="Dateien auch bei unveränderten Metadaten neu hashen")
+    experiment = sub.add_parser("experiment", help="getrennte Seed-Vergleiche mit festen Daten, ohne Rollout")
+    experiment_sub = experiment.add_subparsers(dest="experiment_command", required=True)
+    experiment_prepare = experiment_sub.add_parser("prepare")
+    experiment_prepare.add_argument("--seed", action="append", type=int, required=True)
+    experiment_prepare.add_argument(
+        "--model-profile", choices=["esphome_v2_like", "current", "current_wider"], default="current_wider"
+    )
+    experiment_prepare.add_argument("--output", default="experiments")
+    experiment_run = experiment_sub.add_parser("run")
+    experiment_run.add_argument("--output", default="experiments")
     audit = sub.add_parser("audit", help="Positive, Negative und Auslösungen unabhängig mit STT prüfen")
     audit.add_argument("--output", default="audit", help="privater Berichtordner, relativ zum Projekt")
     audit.add_argument("--stt-model", default="small", help="lokales faster-whisper-Modell oder Modellname")
     audit.add_argument("--threads", type=int, default=4)
     audit.add_argument("--model", action="append", default=[], help="TFLite samt Manifest bewerten (wiederholbar)")
+    audit.add_argument("--teacher", action="append", default=[], help="portablen Log-Mel-Teacher zusätzlich bewerten")
     audit.add_argument("--phrase", action="append", default=[], help="zusätzliche erlaubte STT-Schreibweise")
     for label in ("positive", "negative", "unlabelled"):
         audit.add_argument("--" + label + "-folder", action="append", default=[], help="zusätzliche WAV-Quelle")
+    teacher = sub.add_parser("teacher", help="optionalen Log-Mel-Teacher importieren, prüfen oder trainieren")
+    teacher_sub = teacher.add_subparsers(dest="teacher_command", required=True)
+    teacher_import = teacher_sub.add_parser("import")
+    teacher_import.add_argument("checkpoint")
+    teacher_import.add_argument("--config", required=True, help="ursprüngliche Teacher-YAML mit Feature-Parametern")
+    teacher_import.add_argument("--output", default="teacher/model.pt")
+    teacher_train = teacher_sub.add_parser("train")
+    teacher_train.add_argument("--epochs", type=int, default=30)
+    teacher_train.add_argument("--batch-size", type=int, default=128)
+    teacher_train.add_argument("--seed", type=int, default=1337)
+    teacher_score = teacher_sub.add_parser("score")
+    teacher_score.add_argument("--model", default="teacher/model.pt")
+    teacher_score.add_argument("--folder", action="append", default=[])
+    teacher_score.add_argument("--output", default="teacher/scores.json")
+    teacher_score.add_argument("--threads", type=int, default=2)
     generate = sub.add_parser("generate", help="synthetic speech with Piper")
     generate.add_argument("--force", action="store_true", help="regenerate existing samples")
     sub.add_parser("features", help="augmented spectrograms")

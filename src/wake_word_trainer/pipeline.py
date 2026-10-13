@@ -26,6 +26,35 @@ from .tts import generate
 
 Log = Callable[[str], None]
 
+CHECKPOINT_FILES = ("restore", "best_weights.weights.h5", "last_weights.weights.h5", "training_config.yaml")
+
+
+def snapshot_checkpoint(source: Path, target: Path) -> None:
+    shutil.rmtree(target, ignore_errors=True)
+    target.mkdir(parents=True, exist_ok=True)
+    for name in CHECKPOINT_FILES:
+        path = source / name
+        if path.is_dir():
+            shutil.copytree(path, target / name)
+        elif path.is_file():
+            shutil.copy2(path, target / name)
+
+
+def restore_checkpoint(source: Path, target: Path) -> None:
+    for name in CHECKPOINT_FILES:
+        path = source / name
+        destination = target / name
+        if destination.is_dir():
+            shutil.rmtree(destination)
+        elif destination.exists():
+            destination.unlink()
+        if not path.exists():
+            continue
+        if path.is_dir():
+            shutil.copytree(path, destination)
+        else:
+            shutil.copy2(path, destination)
+
 
 def better(new: Report, old: Report | None) -> bool:
     if old is None or old.recall is None:
@@ -97,9 +126,11 @@ def run(
             return None
 
         rounds_dir = project.model_dir.parent / "rounds"
+        accepted_checkpoint = project.path("checkpoints", "accepted")
         if not resume:
             mining.reset(project)
             shutil.rmtree(rounds_dir, ignore_errors=True)
+            shutil.rmtree(accepted_checkpoint, ignore_errors=True)
         rounds_dir.mkdir(parents=True, exist_ok=True)
         best: Report | None = None
         best_round = 0
@@ -120,10 +151,17 @@ def run(
             log(f"Round {number}: {report.summary()}")
             shutil.copyfile(model, rounds_dir / f"round{number:02d}.tflite")
             (rounds_dir / f"round{number:02d}.json").write_text(json.dumps(asdict(report), indent=2))
+            if best is None and report.probability_cutoff is None:
+                raise ProjectError(report.summary())
             if better(report, best):
                 best, best_round = report, number
+                snapshot_checkpoint(project.model_dir, accepted_checkpoint)
                 state.update(accepted_rounds=int(state.data["accepted_rounds"]) + 1)
             else:
+                # Die nächste Runde beginnt beim angenommenen Modell, wie im Lab.
+                restore_checkpoint(accepted_checkpoint, project.model_dir)
+                if best_round:
+                    shutil.copyfile(rounds_dir / f"round{best_round:02d}.tflite", project.model_dir / TFLITE)
                 state.update(rejected_rounds=int(state.data["rejected_rounds"]) + 1)
             state.update(
                 best_recall=best.recall if best else None,

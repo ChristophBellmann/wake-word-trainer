@@ -57,6 +57,15 @@ def test_negative_with_wake_word_and_model_disagreement_stays_review_only():
     assert audit.findings({"unlabelled"}, [], [], []) == ["unclear_audio"]
 
 
+def test_transcript_matching_does_not_require_clip_padding_or_accept_partial_words():
+    assert audit.transcript_matches("Hey, Növa!", ["hey nova"]) == [
+        {"phrase": "hey nova", "source": "transcript"},
+    ]
+    assert audit.transcript_matches("Heynova", ["hey nova"])
+    assert not audit.transcript_matches("Hey Novamann", ["hey nova"])
+    assert not audit.transcript_matches("Hey Nora", ["hey nova"])
+
+
 def test_model_cache_changes_when_weights_change(tmp_path, monkeypatch):
     project = Project.create(tmp_path / "project", "Hey Nova", "de")
     audio.write(project.recordings / "train" / "room" / "p.wav", np.ones(16000) * 0.1)

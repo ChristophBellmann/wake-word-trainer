@@ -28,6 +28,7 @@ The full documentation is in [docs/](docs/README.md) (also as a [GitBook](https:
 [Settings](docs/configuration.md) ·
 [Pipeline](docs/pipeline.md) ·
 [Evaluation](docs/evaluation.md) ·
+[Lab-Migration und Unterschiede](docs/migration-from-wakeword-lab.md) ·
 [Home Assistant service](docs/service.md) ·
 [Automatic deployment](docs/deployment.md) ·
 [Idle-night training](docs/automatic-training.md) ·
@@ -171,8 +172,11 @@ recordings:
   eval_share: 0.2             # share held out for the evaluation
 negatives:
   speech_folders: []          # more speech the model must ignore (16 kHz WAVs)
+  background_folders: []      # AudioSet/FMA WAVs as negative examples
   speech_presets: []          # downloaded with `download --speech`, e.g. [mls_de]
   speech_clips: 6000          # at most this many, evenly picked
+  eval_share: 0.05            # each: validation and testing for extra negative WAVs
+  feature_sets: [speech, dinner_party, no_speech, dinner_party_eval]
 tts:
   voices: []                  # Piper .onnx files (with .onnx.json beside them)
   phrases: []                 # what is synthesized; phonetic spellings help
@@ -180,23 +184,36 @@ tts:
   negative_phrases: []        # look-alikes the model must ignore
   negative_samples: 1000
   length_scales: [0.8, 0.9, 1.0, 1.1, 1.2]
+  min_positive_duration_seconds: 0.0
 augmentation:
   background_probability: 0.25
   background_min_snr_db: 6
   background_max_snr_db: 22
   rir_probability: 0.3
+  augment_negatives: true     # evaluation audio always stays clean
   background_folders: []      # e.g. recordings of your own living room
   rir_folders: []
 training:
   seed: null                 # optional integer: augmentation, sampling and model initialization
+  model_profile: esphome_v2_like  # also current and current_wider
+  time_mask_max_size: 0
+  time_mask_count: 0
+  freq_mask_max_size: 0
+  freq_mask_count: 0
   steps: 20000                # per round
   batch_size: 128
   learning_rate: 0.001
+  early_stopping_patience: 0  # full evaluations without improvement; zero disables
+  early_stopping_min_delta: 0.0
+  lr_patience: 0              # zero disables LR decay
+  lr_factor: 0.5
+  lr_max_reductions: 3
+  min_learning_rate: 0.00001
   positive_class_weight: 1.0
   negative_class_weight: 20.0
   own_repeat: 8               # augmented copies of each own recording
   weights: {own: 3.0, own_hard: 1.5, own_negative: 4.0, satellite_negative: 4.0, speech_extra: 5.0, mined: 4.0,
-            tts: 2.0, tts_negative: 3.0, speech: 10.0, dinner_party: 10.0, no_speech: 5.0}
+            background_negative: 5.0, tts: 2.0, tts_negative: 3.0, speech: 10.0, dinner_party: 10.0, no_speech: 5.0}
   clip_duration_ms: 1500
   eval_step_interval: 500
   mining_rounds: 0            # extra rounds: mine false activations, train again
@@ -223,6 +240,11 @@ Positive, Negative und ungeprüfte Auslösungen lokal und bewertet sie optional
 mit mehreren Wakeword-Modellen. Sie markiert Widersprüche zum Anhören und
 verändert keine Labels. Der aktuelle Trainer trainiert microWakeWord direkt;
 ein separater Teacher ist dafür nicht erforderlich.
+`teacher import/train/score` stellt ihn als zusätzliche Prüfstimme bereit;
+[Lab-Migration und Unterschiede](docs/migration-from-wakeword-lab.md) beschreibt
+die Grenzen, den Datenimport und getrennte Seed-Vergleiche. Die dort verglichenen
+Lab-Kampagnen sprechen dafür, Mining zunächst auszulassen und bestätigte reale
+Fehlaktivierungen als Negative zu verwenden.
 
 - **Your own negatives** (`recordings.negative_folders`, or clips marked
   *not the wake word* in the collector) are the strongest lever against false
