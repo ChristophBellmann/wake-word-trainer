@@ -1,5 +1,10 @@
 # Wake Word Trainer
 
+Bei Fehlalarmen während Gesprächen beginnt die Anleitung mit
+[Fehlaktivierungen beim Telefonieren verringern](false-activations-workflow.md):
+Collector-Sammlung, geprüfte Labels, unabhängige STT/Teacher-Prüfung, GPU-Läufe
+und Modellvergleich vor dem Rollout.
+
 Train a wake word model for ESPHome voice satellites (`micro_wake_word`) from
 **your own recordings** plus synthetic speech, and get an honest measurement
 of how well it works on your voice before you flash it.

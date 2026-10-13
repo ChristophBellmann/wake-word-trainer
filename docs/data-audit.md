@@ -114,11 +114,27 @@ Checkpoint sowie den Frühstopp. Pro Clip trainiert er mit dem letzten
 CPU. Die Log-Mel-Aufbereitung bleibt auf CPU; Modell und Optimierer laufen
 auf dem gewählten Gerät. GPU-Arbeit wird mit Student und Benchmarks serialisiert.
 
-Dieser Baseline-Lauf verwendet bislang weder TTS noch externe Korpora oder
-Audio-Augmentation und reproduziert deshalb nicht das vollständige alte
-Teacher-Training. Er aktiviert keinen Teacher-Loss im Student und keinen
-Rollout. Erst der Vergleich auf heutigen Satellitenaufnahmen entscheidet,
-ob er als zusätzliche Prüfstimme hilft.
+Der Baseline-Lauf nutzt eigene Aufnahmen. Ein zusätzlicher Vergleich kann die
+bereits vorbereiteten positiven/negativen TTS, schwierigen Positive und externe
+WAV-Sprach-/Hintergrundkorpora einbeziehen:
+
+```bash
+wake-word-trainer -p comparison teacher train --device gpu --epochs 40 \
+  --include-corpus --negative-limit 6000 --initial-model teacher/legacy.pt
+```
+
+`--initial-model` ist optional und verlangt identische Log-Mel-Parameter.
+`--negative-limit` begrenzt jedes externe Korpus nach dem Trainings-/Holdout-
+Split. Derselbe Inhalts-Split wie beim Student hält dessen externe Prüfclips
+aus dem Teacher-Optimierer. Positive TTS beachten den Dauerfilter; lange
+Trainingsnegative liefern ein reproduzierbares zufälliges Fenster. Eigene
+Bewertungsaufnahmen bestimmen weiter den besten Checkpoint. Quellen und
+Anzahlen stehen privat in `teacher/training-sources.json` und im Checkpoint.
+
+Microfrontend-MMAPs bleiben ausgeschlossen. Audio-Augmentation und das
+vollständige alte Teacher-Regime werden damit noch nicht reproduziert. Der
+Lauf aktiviert weder Teacher-Loss im Student noch Rollout. Erst der Vergleich
+auf heutigen Satellitenaufnahmen entscheidet, ob der neue Teacher hilft.
 
 Für Herkunft, sichere Datenübernahme und getrennte Seed-Läufe:
 [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md).

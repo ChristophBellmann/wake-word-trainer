@@ -13,6 +13,7 @@
 * [The pipeline step by step](pipeline.md)
 * [Evaluation and the cutoff](evaluation.md)
 * [Better models: more data, fewer false activations](better-models.md)
+* [Fehlaktivierungen beim Telefonieren verringern](false-activations-workflow.md)
 * [Positive, Negative und Fehlaktivierungen prüfen](data-audit.md)
 * [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md)
 * [GPU-Training und Benchmarks](gpu-training-and-benchmarks.md)

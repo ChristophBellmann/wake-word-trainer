@@ -2,6 +2,10 @@
 
 ## Your recordings decide
 
+Für Fehlalarme beim Telefonieren führt der [zusammenhängende Ablauf](false-activations-workflow.md)
+von der Collector-Aufnahme über Quellenprüfung und GPU-Training bis zum
+gemeinsamen Modellvergleich und dem freigegebenen Rollout.
+
 Synthetic voices are cheap, but a model that is good on them is not
 necessarily good on you. 50 or more own recordings from the satellites, from
 several people and distances, make a real difference. The

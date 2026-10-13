@@ -144,15 +144,15 @@ class Teacher:
         import torch
 
         torch.set_num_threads(threads)
-        self.device = torch_device(device)
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
         if checkpoint.get("format") != FORMAT or checkpoint.get("feature_space") != "logmel":
             raise ProjectError("Kein portabler Log-Mel-Teacher; zuerst teacher import mit der Original-Konfiguration")
         self.frontend = Frontend(Parameters(**checkpoint["features"]))
         self.model = network()
         self.model.load_state_dict(checkpoint["model_state_dict"], strict=True)
-        guard = lease("teacher-initialize") if self.device.type == "cuda" else contextlib.nullcontext()
+        guard = lease("teacher-initialize") if device != "cpu" else contextlib.nullcontext()
         with guard:
+            self.device = torch_device(device)
             self.model.to(self.device)
         self.model.eval()
         self.metadata = {
@@ -180,14 +180,68 @@ class Teacher:
         }
 
 
-def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int = 1337, device: str = "auto") -> Path:
-    selected = torch_device(device)
-    guard = lease("teacher-training") if selected.type == "cuda" else contextlib.nullcontext()
+def training_sources(project: Project, include_corpus: bool = False, negative_limit: int = 6000) -> dict:
+    """Nur WAV-Quellen: externer Holdout folgt demselben Split wie beim Student."""
+    if negative_limit < 1:
+        raise ProjectError("Teacher-Korpuslimit muss positiv sein")
+    sources = {
+        "train_positive": audio.wavs(project.recordings / "train"),
+        "train_negative": audio.wavs(project.recordings / "negative" / "train"),
+        "eval_positive": audio.wavs(project.recordings / "eval"),
+        "eval_negative": audio.wavs(project.recordings / "negative" / "eval"),
+    }
+    if include_corpus:
+        from .datasets import preflight
+        from .features import _holdout
+
+        preflight(project)
+        hashes = {row["path"]: row["sha256"] for row in (
+            json.loads(line) for line in project.path("dataset-manifest.jsonl").read_text().splitlines()
+        )}
+        sources["train_positive"] += audio.wavs(project.recordings / "hard")
+        minimum = float(project.config["tts"]["min_positive_duration_seconds"])
+        sources["train_positive"] += [
+            p for p in audio.wavs(project.path("tts", "positive")) if len(audio.read(p)) / audio.RATE >= minimum
+        ]
+        sources["train_negative"] += audio.wavs(project.path("tts", "negative"))
+        for key in ("speech_folders", "background_folders"):
+            paths = audio.wavs(*[project.resolve(p) for p in project.config["negatives"][key]])
+            # speech_clips wird auch vom Student vor dem Split angewendet.
+            cap = int(project.config["negatives"]["speech_clips"]) if key == "speech_folders" else 0
+            if 0 < cap < len(paths):
+                paths = [paths[int(i * len(paths) / cap)] for i in range(cap)]
+            paths, _, _ = _holdout(paths, float(project.config["negatives"]["eval_share"]), hashes)
+            if len(paths) > negative_limit:
+                paths = [paths[int(i * len(paths) / negative_limit)] for i in range(negative_limit)]
+            sources["train_negative"] += paths
+    # Inhalt statt Dateiname: jeder Clip nur einmal, keine gegenläufigen Labels.
+    seen = {}
+    result = {}
+    for role, paths in sources.items():
+        result[role] = []
+        for path in paths:
+            sha = hashlib.sha256(path.read_bytes()).hexdigest()
+            if sha in seen:
+                previous = seen[sha]
+                if previous != role:
+                    raise ProjectError("Teacher-Training verweigert: identischer Inhalt in verschiedenen Datenrollen")
+                continue
+            seen[sha] = role
+            result[role].append(path)
+    return result
+
+
+def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int = 1337, device: str = "auto",
+          include_corpus: bool = False, negative_limit: int = 6000, initial_model: Path | None = None) -> Path:
+    guard = lease("teacher-training") if device != "cpu" else contextlib.nullcontext()
     with guard:
-        return _train(project, epochs, batch_size, seed, selected)
+        return _train(
+            project, epochs, batch_size, seed, torch_device(device), include_corpus, negative_limit, initial_model
+        )
 
 
-def _train(project: Project, epochs: int, batch_size: int, seed: int, device) -> Path:
+def _train(project: Project, epochs: int, batch_size: int, seed: int, device, include_corpus: bool = False,
+           negative_limit: int = 6000, initial_model: Path | None = None) -> Path:
     """Geprüfte Labels; Holdouts bleiben aus dem Optimierer. GPU ausdrücklich wählbar."""
     import torch
     from torch.utils.data import DataLoader, TensorDataset
@@ -196,11 +250,18 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device) ->
     torch.manual_seed(seed)
     frontend = Frontend(Parameters())
     model = network(0.25).to(device)
+    sources = training_sources(project, include_corpus, negative_limit)
+    if initial_model is not None:
+        checkpoint = torch.load(initial_model, map_location="cpu", weights_only=True)
+        if (checkpoint.get("format") != FORMAT or checkpoint.get("feature_space") != "logmel"
+                or checkpoint.get("features") != asdict(frontend.params)):
+            raise ProjectError("Initialer Teacher hat inkompatible Log-Mel-Parameter")
+        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     print(f"Teacher training device: {device}", flush=True)
 
     def dataset(split):
-        positives = audio.wavs(project.recordings / split)
-        negatives = audio.wavs(project.recordings / "negative" / split)
+        positives = sources[f"{split}_positive"]
+        negatives = sources[f"{split}_negative"]
         if not positives or not negatives:
             raise ProjectError(f"Teacher benötigt positive und negative Aufnahmen in {split}")
         # Für diese erste portable Variante: ein vollständiges Fenster pro Clip.
@@ -208,7 +269,15 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device) ->
         features, labels = [], []
         for truth, paths in ((1.0, positives), (0.0, negatives)):
             for path in paths:
-                samples = audio.read(path)[-frontend.length :]
+                samples = audio.read(path)
+                if split == "train" and not truth and len(samples) > frontend.length:
+                    # Lange Sprache/Hintergründe nicht nur an ihrem Ende ansehen.
+                    clip_seed = int.from_bytes(hashlib.sha256(path.read_bytes()).digest()[:4], "big") ^ seed
+                    rng = np.random.default_rng(clip_seed)
+                    start = int(rng.integers(0, len(samples) - frontend.length + 1))
+                    samples = samples[start : start + frontend.length]
+                else:
+                    samples = samples[-frontend.length :]
                 samples = np.pad(samples, (0, max(0, frontend.length - len(samples))))
                 features.append(frontend.clip(samples))
                 labels.append(truth)
@@ -218,16 +287,10 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device) ->
 
     training, ratio = dataset("train")
     validation, _ = dataset("eval")
-    train_hashes = {
-        hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in audio.wavs(project.recordings / "train", project.recordings / "negative" / "train")
-    }
-    eval_hashes = {
-        hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in audio.wavs(project.recordings / "eval", project.recordings / "negative" / "eval")
-    }
-    if train_hashes & eval_hashes:
-        raise ProjectError("Teacher-Training verweigert: identischer Inhalt in Training und Bewertung")
+    source_report = {role: [str(p) for p in paths] for role, paths in sources.items()}
+    project.path("teacher").mkdir(parents=True, exist_ok=True)
+    project.path("teacher", "training-sources.json").write_text(json.dumps(source_report, indent=2))
+    print(f"Teacher-Quellen: { {role: len(paths) for role, paths in sources.items()} }", flush=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0001)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([ratio], device=device))
     target = project.path("teacher", "model.pt")
@@ -252,7 +315,9 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device) ->
         print(f"Teacher: Epoche {epoch + 1}/{epochs}, Prüfloss {loss:.4f}", flush=True)
         if loss < best:
             best, stale = loss, 0
-            save(target, model, frontend.params, seed=seed, history=history, training_device=str(device))
+            save(target, model, frontend.params, seed=seed, history=history, training_device=str(device),
+                 source_counts={role: len(paths) for role, paths in sources.items()}, include_corpus=include_corpus,
+                 initial_sha256=hashlib.sha256(initial_model.read_bytes()).hexdigest() if initial_model else None)
         else:
             stale += 1
         if stale >= 6:

@@ -8,7 +8,7 @@ import yaml
 
 from wake_word_trainer import audio
 from wake_word_trainer.project import Project, ProjectError
-from wake_word_trainer.teacher import Frontend, Parameters, Teacher, import_checkpoint, network, train
+from wake_word_trainer.teacher import Frontend, Parameters, Teacher, import_checkpoint, network, train, training_sources
 
 torch = pytest.importorskip("torch")
 
@@ -85,3 +85,31 @@ def test_score_cli_keeps_audio_hash_separate_from_model_hash(tmp_path, monkeypat
     result = json.loads(project.path("teacher/scores.json").read_text())
     assert result["clips"][0]["sha256"] == digest(clip)
     assert result["clips"][0]["teacher"]["sha256"] == "model-hash"
+
+
+def test_corpus_teacher_keeps_external_holdout_and_filters_short_tts(tmp_path):
+    from wake_word_trainer.features import _holdout
+
+    project = Project.create(tmp_path / "project", "Hey Nova", "de")
+    project.config["negatives"].update(speech_folders=[str(tmp_path / "speech")], eval_share=0.2)
+    project.config["tts"]["min_positive_duration_seconds"] = 0.6
+    for index in range(10):
+        samples = np.random.default_rng(index).normal(0, 0.02, 16000).astype(np.float32)
+        audio.write(tmp_path / "speech" / f"{index}.wav", samples)
+    audio.write(project.path("tts", "positive", "short.wav"), np.zeros(4000))
+    audio.write(project.path("tts", "positive", "long.wav"), np.ones(16000) * 0.1)
+    audio.write(project.path("tts", "negative", "similar.wav"), np.ones(16000) * 0.01)
+    sources = training_sources(project, True, 3)
+    _, validation, testing = _holdout(audio.wavs(tmp_path / "speech"), 0.2)
+    assert not set(sources["train_negative"]) & set(validation + testing)
+    assert len(sources["train_negative"]) == 4  # Drei externe plus ein ähnliches TTS-Wort.
+    assert [p.name for p in sources["train_positive"]] == ["long.wav"]
+
+
+def test_corpus_teacher_checks_tts_against_own_eval_before_training(tmp_path):
+    project = Project.create(tmp_path / "project", "Hey Nova")
+    samples = np.ones(16000) * 0.1
+    audio.write(project.path("tts", "positive", "same.wav"), samples)
+    audio.write(project.recordings / "eval" / "room" / "same.wav", samples)
+    with pytest.raises(ProjectError, match="Training/Bewertung"):
+        training_sources(project, True)

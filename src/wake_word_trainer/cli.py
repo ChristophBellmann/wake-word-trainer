@@ -156,7 +156,10 @@ def cmd_teacher(args: argparse.Namespace) -> None:
         import_checkpoint(project.resolve(args.checkpoint), project.resolve(args.config), target)
         print(f"Portabler Teacher: {target}")
     elif args.teacher_command == "train":
-        print(f"Teacher gespeichert: {train(project, args.epochs, args.batch_size, args.seed, device=args.device)}")
+        checkpoint = train(project, args.epochs, args.batch_size, args.seed, device=args.device,
+                           include_corpus=args.include_corpus, negative_limit=args.negative_limit,
+                           initial_model=project.resolve(args.initial_model) if args.initial_model else None)
+        print(f"Teacher gespeichert: {checkpoint}")
     else:
         from . import audio
         from .audit import inventory
@@ -428,6 +431,11 @@ def parser() -> argparse.ArgumentParser:
     teacher_train.add_argument("--batch-size", type=int, default=128)
     teacher_train.add_argument("--seed", type=int, default=1337)
     teacher_train.add_argument("--device", choices=["auto", "gpu", "cpu"], default="auto")
+    teacher_train.add_argument(
+        "--include-corpus", action="store_true", help="TTS und getrennte WAV-Korpora einbeziehen"
+    )
+    teacher_train.add_argument("--negative-limit", type=int, default=6000, help="Maximalzahl je externem Negativkorpus")
+    teacher_train.add_argument("--initial-model", help="Kompatiblen portablen Log-Mel-Teacher weitertrainieren")
     teacher_score = teacher_sub.add_parser("score")
     teacher_score.add_argument("--model", default="teacher/model.pt")
     teacher_score.add_argument("--folder", action="append", default=[])
