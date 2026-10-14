@@ -200,7 +200,9 @@ def measure(project: Project, model_path: Path, downloads: Path, window: int, am
 
     positives, source = _positives(project)
     negatives = audio.wavs(project.recordings / "negative" / "eval")
-    ambient = [scores(track.astype(np.float32)) for track in _ambient_tracks(downloads, ambient_extra)]
+    # Model.predict_spectrogram scales raw uint16 microfrontend features itself.
+    # Preserve the dtype: casting here would make it skip that conversion.
+    ambient = [scores(track) for track in _ambient_tracks(downloads, ambient_extra)]
     faph, hours = false_accepts_per_hour(ambient, slice_seconds=slice_seconds)
     return Measurement(
         model=model_path,

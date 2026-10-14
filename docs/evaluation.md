@@ -14,6 +14,22 @@ int8, sliding window of `evaluation.sliding_window_size` frames):
 
 for all 256 possible cutoffs.
 
+### Korrektur der MMAP-Skalierung am 14.10.2026
+
+Vorgefertigte Hugging-Face-MMAPs enthalten unskalierte `uint16`-Features.
+Die Inferenz multipliziert sie nach der Float-Konvertierung mit `0.0390625`.
+Der Trainer erhält dafür jetzt ihren ursprünglichen Datentyp. Zuvor castete
+`evaluate` Ambient-Features vorzeitig in Float und umging diese Skalierung.
+Bereits skalierte Float-Features waren nicht betroffen; ebenso wenig die
+Bewertung eigener WAV-Aufnahmen und die Skalierung im Trainingsbackend.
+
+Frühere Ambient-FAPH-Berichte, davon abhängige Cutoffs und Parity-Entscheide
+mit diesen Roh-MMAPs müssen neu berechnet werden. Das gilt auch für die
+zunächst dokumentierten Qualitätsvergleiche der Lab-Übernahme. Die Modelle
+müssen dafür nicht neu trainiert werden. `evaluate`, `compare` und die
+Rollout-Prüfung verwenden dieselbe korrigierte Inferenz. Ein Regressionstest
+prüft Roh-MMAPs und bereits skalierte Features mit demselben Inhalt.
+
 ## Choosing the cutoff
 
 The most sensitive cutoff is chosen that stays within
