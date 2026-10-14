@@ -13,7 +13,8 @@ def test_static_framework_metadata_without_import(tmp_path, monkeypatch, cuda, r
     metadata = package / "python/platform/build_info.py"
     metadata.parent.mkdir(parents=True)
     metadata.write_text(
-        f"import collections\nbuild_info = collections.OrderedDict([('is_cuda_build', {cuda}), ('is_rocm_build', {rocm})])\n"
+        "import collections\n"
+        f"build_info = collections.OrderedDict([('is_cuda_build', {cuda}), ('is_rocm_build', {rocm})])\n"
     )
     monkeypatch.setattr(
         "wake_word_trainer.gpu.importlib.util.find_spec",
