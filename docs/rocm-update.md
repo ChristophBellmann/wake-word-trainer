@@ -42,7 +42,8 @@ teacher-rocm10/bin/python -m pip install \
   --index-url https://stable.repo.amd.com/rocm/whl-next/ \
   --extra-index-url https://pypi.org/simple \
   'torch[device-gfx1031]==2.12.0+rocm10.1.0' 'numpy==1.26.4'
-teacher-rocm10/bin/python -m pip install wake-word-trainer
+teacher-rocm10/bin/python -m pip install 'numpy==1.26.4' \
+  'wake-word-trainer @ git+https://github.com/ChristophBellmann/wake-word-trainer'
 ```
 
 Die genaue Torch-Version verhindert eine andere Auswahl über den zusätzlichen
@@ -65,8 +66,41 @@ Build mit neuem nativem SDK und das verfügbare AMD-TensorFlow-Wheel mit dem
 neuen SDK. Features, Profil, Batch und Eingabepipeline bleiben gleich. Die
 geladenen Bibliotheken müssen zum ausgewählten Bestand gehören.
 
-Diese Prüfung läuft noch. Bis zum vollständigen Trainings-/Exportnachweis
-bleibt die bisherige Workstation-Installation aktiv.
+Mit demselben bisherigen TensorFlow-Build wurde der neue native SDK-Bestand
+geprüft: zweimal 50 Aufwärm- und 250 Messschritte, Batch 256, gleiche
+TFRecord-Features, umgekehrte Reihenfolge. Der Median stieg von etwa
+**49,7 auf 62,9 Schritte/s**, rund **27 %**. MIOpen 3.6.1 und die weiteren
+GPU-Bibliotheken wurden aus dem neuen Ziel geladen; die Prüfung schließt
+alte `/opt/rocm`-Bibliotheken im neuen Lauf ausdrücklich aus.
+
+Ein separater Lauf mit 1.000 GPU-Schritten bestand Checkpoints, int8-Konvertierung
+und Streaming-Inferenz. Das ist ein Funktionsnachweis der neuen Runtime mit
+diesem Build; es ist noch kein vollständiger Wheel-Austausch.
+
+## Angepasste alte Wheels ebenfalls ersetzen
+
+Die alten Eigenbau-Wheels gehören zur alten Umgebung. Der Test mit dem
+bisherigen TensorFlow-Build dient als Zwischennachweis. Der Zielplan ersetzt
+auch diese Pakete durch passende aktuelle Wheels, jeweils mit gemeinsamem
+GPU-/Trainings-/Exporttest. Torch ist bereits durch die stabilen AMD-Pakete
+ersetzt und in einer getrennten Umgebung geprüft.
+
+Das verfügbare AMD-TensorFlow-Wheel für ROCm 7.2.1 stürzte mit dem neuen SDK
+beim Import ab; ohne die alten Preloads war außerdem ein fehlerhafter
+Prozessabschluss zu beobachten. Der Debugger zeigt eine Kollision von
+TensorFlow-LLVM/MLIR mit dem SDK-LLVM. Auch der alte Torch-Build bestand die
+Kombination mit neuer Runtime nicht. Bibliothekskopieren allein ist deshalb
+kein vollständiger Wechselplan.
+
+Für TensorFlow wird ein neues Wheel aus festgelegtem AMD-Quellstand gegen
+SDK 10.1 und `gfx1031` vorbereitet. Es ersetzt erst nach eigenem Nachweis das
+alte angepasste Wheel. Tatsächlich verwendete weitere GPU-Pakete und die
+Interpreter der LLM-/TTS-Dienste werden getrennt erfasst. Nicht mehr genutzte
+Lab-Pakete werden nicht vorsorglich in den neuen Trainer installiert.
+
+Die aktive Installation bleibt bis zu einem gemeinsam geprüften Zielbestand
+erhalten. Die native SDK-Datei und die neuen Python-SDK-Pakete sind vorbereitet;
+der vollständige Paketwechsel bleibt ein eigener, noch nicht freigegebener Schritt.
 
 ## Umzug nach `/opt/rocm` vorbereiten
 

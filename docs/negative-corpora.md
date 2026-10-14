@@ -27,6 +27,11 @@ zusätzlichen belegen im alten Bestand weitere rund 17 GiB. Alle sieben
 Archive lassen sich herunterladen; das bedeutet nicht, dass alle mit dem
 aktuellen Frontend kompatibel sind.
 
+Die sechs alten Trainingsquellen umfassen zusammen **1.535.112 Einträge**;
+die drei kompatiblen aktuellen HF-Trainingsquellen **647.283 Einträge**.
+Diese Summe ist keine Zahl einzigartiger Audios: etwa die beiden CHiME-
+Fassungen enthalten überlappende Originalaufnahmen bei anderem Frontend.
+
 Die [HF-Quellenbeschreibung](https://huggingface.co/datasets/kahrendt/microwakeword/blob/main/README.md)
 nennt für die älteren Background-Archive 20-ms-Schritte und beschreibt
 CHiME6/DipCo-Gespräche, LibriSpeech/VOiCES sowie FMA/FSD50K/WHAM. Der Trainer
@@ -107,6 +112,90 @@ HF-Gewichtsmasse 25 wird dadurch ersetzt; positive/negative Gesamtsampling-
 Masse und Klassengewichte bleiben wie beim Ausgangsmodell. Das prüft den
 Nutzen gegenüber diesen konkreten Ersatzkorpora.
 
-Die Ergebnisse werden nach vollständiger Bewertung beider Seeds ergänzt.
-Eine Aussage über reale Telefonate benötigt darüber hinaus weitere
-bestätigte Collector-Negative und einen unabhängigen Prüfbestand.
+### Ergebnisse mit korrigierter Inferenz
+
+Vier neue GPU-Trainingsläufe wurden mit den beiden bereits vorhandenen
+HF-Ausgangsmodellen verglichen. Alle sechs Modelle und das laufende Modell
+wurden anschließend mit korrekter MMAP-Skalierung und ganzzahligen
+8-Bit-Fenstersummen auf demselben Audio neu bewertet.
+
+Bei identischer Schwelle **230/255**:
+
+| Variante | Seed-Ende | Positive / 47 | Eigene Negativfehler / 319 | Satellitenfehler / 14 | Ambient-Fehler/h |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HF-Standardquellen | 16 | 46 | 3 | 3 | 0,562 |
+| HF entfernt | 16 | 45 | 6 | 4 | 0,750 |
+| HF durch WAV-Korpora ersetzt, Sampling-Masse gleich | 16 | 43 | 4 | 3 | 0,187 |
+| HF-Standardquellen | 22 | 41 | 2 | 2 | 0,000 |
+| HF entfernt | 22 | 45 | 6 | 4 | 1,312 |
+| HF durch WAV-Korpora ersetzt, Sampling-Masse gleich | 22 | 44 | 7 | 5 | 0,000 |
+| Laufendes Modell als Referenz | — | 46 | 5 | 5 | 0,000 |
+
+Die gleiche Zahl erkannter Wakewords ist die bessere Vergleichsbasis als
+allein die gleiche numerische Schwelle. Bei mindestens **46/47 Treffern**,
+jeweils mit der höchsten noch möglichen 8-Bit-Schwelle:
+
+| Variante | Seed-Ende | Ambient-Fehler/h | Satellitenfehler / 14 |
+| --- | ---: | ---: | ---: |
+| HF-Standardquellen | 16 | 0,562 | 3 |
+| HF entfernt | 16 | 3,562 | 7 |
+| HF durch WAV-Korpora ersetzt | 16 | 7,311 | 8 |
+| HF-Standardquellen | 22 | 4,499 | 7 |
+| HF entfernt | 22 | 14,810 | 6 |
+| HF durch WAV-Korpora ersetzt | 22 | 10,873 | 7 |
+| Laufendes Modell als Referenz | — | 0,000 | 4 |
+
+**Entscheidung:** Die drei kompatiblen HF-Quellen bleiben enthalten. Auf
+beiden Seeds senken sie bei vergleichbarer Erkennung die Ambient-Fehler
+gegenüber Entfernen und diesen konkreten Ersatzkorpora. Es gibt zugleich
+Zielkonflikte und deutliche Seed-Streuung. Keines dieser sechs Modelle
+verbessert die laufende Referenz unter dem festgelegten Budget bei gleicher
+Erkennung. Kein Modell wurde ausgerollt.
+
+Bei einem beobachteten Budget von 0,1 Fehler/h erkennt HF-Seed 16 nur 43/47,
+HF-Seed 22 41/47. Ohne HF sind es 45/47 beziehungsweise 0/47: Beim zweiten
+Seed erreicht erst 255/255 das Budget, dort darf kein Wakeword auslösen.
+Die zuvor durch Float-Rundung angezeigten Treffer oberhalb von 1,0 sind
+entfernt. Die Ersatzvarianten erreichen 43/47 beziehungsweise 44/47.
+
+Das Ambient-Audio umfasst 5,334 Stunden. Ein Fehler entspricht rund
+0,187 Fehlern/h; null beobachtete Fehler belegen daher noch keine stabile
+Alltagsrate unter 0,1/h. Diese kleinen, bereits zur Auswahl verwendeten
+Holdouts sind kein unabhängiger Alltagstest. Dafür weitere bestätigte
+Collector-Negative und einen neuen Prüfbestand sammeln.
+
+## Korpusgröße und TFRecord-Pool unterscheiden
+
+`training.tfrecord_examples: 65536` begrenzt den einmal gezogenen statischen
+Eingangspool, nicht den Downloadbestand. Ein langer Lauf liest diesen Pool
+wiederholt; SpecAugment zieht dabei neue Masken. Mehr als eine Million
+verarbeitete Beispiele bedeuten deshalb nicht mehr als eine Million
+unterschiedliche Korpus-Clips. Der Standardpfad `prefetch` zieht fortlaufend
+aus den vollständigen Quellen, ist auf diesem Bestand aber deutlich langsamer.
+
+Ein zusätzlicher Vergleich mit **1.048.576 gezogenen Pool-Beispielen** auf
+denselben beiden Seeds prüft diese mögliche Begrenzung separat. Quellen,
+Gewichte, Architektur, Features, Batchgröße und Prüfaudio bleiben dabei
+identisch. Der Pool ist hier rund 32 GiB groß und wird als Datenträgerdatei
+gestreamt. Beide GPU-Läufe sind abgeschlossen, bei Cutoff 230/255:
+
+| Pool | Seed-Ende | Positive / 47 | Eigene Negativfehler / 319 | Satellitenfehler / 14 | Ambient-Fehler/h |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 65.536, HF-Standard | 16 | 46 | 3 | 3 | 0,562 |
+| 1.048.576, gleiche Quellen | 16 | 46 | 8 | 6 | 0,000 |
+| 65.536, HF-Standard | 22 | 41 | 2 | 2 | 0,000 |
+| 1.048.576, gleiche Quellen | 22 | 44 | 5 | 3 | 0,000 |
+
+Der größere Pool senkt auf Seed 16 die beobachteten Ambient-Fehler und erhöht
+auf Seed 22 die Erkennung. Auf beiden Seeds nehmen jedoch die eigenen und
+Satelliten-Fehler zu. Gegenüber dem laufenden Modell gewinnt keiner dieser
+Läufe den festgelegten Gesamtvergleich. **Die Dienstvorgabe bleibt 65.536.**
+
+Der einmalige Pool-Bau dauerte etwa 490 beziehungsweise 644 Sekunden. Die
+Läufe stoppten nach 13.500 beziehungsweise 5.000 Schritten. Der größere Pool
+passte nicht vollständig in den verfügbaren Dateicache und verursachte mehr
+Input-Wartezeit. Diese Zeiten sind keine isolierte Durchsatzmessung: Während
+Teilen des ersten Laufs wurde parallel das neue native SDK vorbereitet.
+Die Modellqualität wurde weiterhin offline auf identischem Audio gemessen.
+Die temporären 32-GiB-Dateien wurden nach der Messung entfernt; Signaturen,
+Prüfsummen, Berichte und Modelle bleiben privat erhalten.
