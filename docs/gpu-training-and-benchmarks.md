@@ -227,10 +227,11 @@ Ein Student mit dem größeren offiziellen Profil hielt 46/47 erkannte eigene
 Prüfaufnahmen und verringerte die ausgelösten Satelliten-Negative von 5/14 auf
 3/14; der lokale Vergleich bestand. Ein zweiter Seed dieses Profils erkannte
 nur 41/47 und blieb gesperrt. Deshalb ist die Architektur allein keine Zusage
-eines besseren Ergebnisses. Bei unabhängigen sauberen Thorsten-high-Sätzen
-erkannten alle Modelle 9/9 positive Kontrollen; 60 Gesprächsnegative lösten
-6-mal beim eingesetzten Modell und 2-mal beim ersten Kandidaten aus. Diese
-synthetische Prüfung ersetzt neue reale Telefonaufnahmen nicht.
+eines besseren Ergebnisses. Zusätzlich wurden feste Thorsten-high-Sätze
+offline verglichen. Die unabhängige STT las nur 14/23 Texte exakt normalisiert
+zurück und verwechselte auch den seltenen Namen. Dieser synthetische Durchgang
+bleibt daher ein begrenzter Funktionstest; er liefert keinen zusätzlichen
+belastbaren Nachweis für die reale Telefonstrecke.
 
 Die kleinen Satelliten-Holdouts dienen auch Auswahl und Kalibrierung. Zwei
 Fehler weniger auf 14 Negativen belegen noch keinen stabilen Alltagsgewinn.
