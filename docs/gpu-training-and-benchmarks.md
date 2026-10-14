@@ -1,5 +1,8 @@
 # GPU-Training und reproduzierbare Benchmarks
 
+Der [ROCm-/MIOpen-Vergleich](rocm-update.md) dokumentiert den separat geprüften
+neuen AMD-Stack, den Teacher-Durchsatz und die Vorbereitung eines Systemumzugs.
+
 Der Student trainiert mit TensorFlow auf CUDA oder ROCm, der optionale Teacher
 mit PyTorch auf CUDA/ROCm. `training.device: gpu` verlangt eine tatsächlich
 verfügbare GPU; ein fehlender Treiber oder CPU-Wheel führt zum Abbruch. `auto`

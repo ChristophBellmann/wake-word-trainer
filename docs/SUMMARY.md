@@ -18,6 +18,7 @@
 * [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md)
 * [Negativkorpora und ihr Qualitätsvergleich](negative-corpora.md)
 * [GPU-Training und Benchmarks](gpu-training-and-benchmarks.md)
+* [ROCm-/MIOpen-Update und Umzug vorbereiten](rocm-update.md)
 * [Replacing a model you already use](replacing-a-model.md)
 
 ## Home Assistant

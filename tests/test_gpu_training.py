@@ -38,6 +38,26 @@ def test_runtime_environment_preserves_explicit_settings(tmp_path):
     assert original["PATH"] == "/custom/bin"
 
 
+def test_python_sdk_does_not_inject_system_rocm_or_legacy_workarounds(monkeypatch):
+    monkeypatch.setattr("wake_word_trainer.gpu._python_rocm_sdk", lambda: True)
+    original = {"PATH": "/new/venv/bin", "LD_LIBRARY_PATH": "/explicit/lib"}
+    result = environment(original)
+    assert result["PATH"] == original["PATH"]
+    assert result["LD_LIBRARY_PATH"] == original["LD_LIBRARY_PATH"]
+    assert "ROCM_PATH" not in result and "LD_PRELOAD" not in result
+    assert "TF_ROCM_DISABLE_HIPBLASLT" not in result
+
+
+def test_explicit_rocm_path_overrides_python_sdk(monkeypatch, tmp_path):
+    monkeypatch.setattr("wake_word_trainer.gpu._python_rocm_sdk", lambda: True)
+    root = tmp_path / "chosen-rocm"
+    (root / "lib").mkdir(parents=True)
+    (root / "lib/librccl.so.1").touch()
+    result = environment({"ROCM_PATH": str(root)})
+    assert str(root / "lib") in result["LD_LIBRARY_PATH"]
+    assert str(root / "lib/librccl.so.1") in result["LD_PRELOAD"]
+
+
 def test_amd_telemetry_does_not_need_rocm_smi(tmp_path):
     root = tmp_path / "card1/device"
     root.mkdir(parents=True)

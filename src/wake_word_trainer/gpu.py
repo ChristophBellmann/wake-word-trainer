@@ -6,15 +6,29 @@ import contextlib
 import json
 import os
 import time
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .project import ProjectError
 
 
+def _python_rocm_sdk() -> bool:
+    """Detect AMD's self-contained SDK without importing or initializing a GPU."""
+    try:
+        version("rocm-sdk-core")
+        version("rocm-sdk-libraries")
+    except PackageNotFoundError:
+        return False
+    return True
+
+
 def environment(original: dict | None = None) -> dict:
     env = dict(os.environ if original is None else original)
     root = Path(env.get("ROCM_PATH", "/opt/rocm"))
-    if root.is_dir():
+    # TheRock's Python packages initialize their matching libraries themselves.
+    # Injecting /opt/rocm or its RCCL into them would mix two different stacks.
+    python_sdk = not env.get("ROCM_PATH") and _python_rocm_sdk()
+    if root.is_dir() and not python_sdk:
         env.setdefault("ROCM_PATH", str(root))
         for key, paths in {
             "PATH": [root / "bin", root / "llvm/bin"],
