@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
+import importlib.util
 import json
 import os
 import time
@@ -22,13 +24,35 @@ def _python_rocm_sdk() -> bool:
     return True
 
 
+def _tensorflow_rocm_build() -> bool:
+    """Read static build metadata without importing or initializing TensorFlow."""
+    spec = importlib.util.find_spec("tensorflow")
+    if spec is None or not spec.origin:
+        return False
+    path = Path(spec.origin).parent / "python/platform/build_info.py"
+    try:
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "build_info" for target in node.targets
+            ):
+                value = node.value
+                if isinstance(value, ast.Call) and value.args:
+                    value = value.args[0]
+                return dict(ast.literal_eval(value)).get("is_rocm_build") is True
+    except (OSError, SyntaxError, ValueError, TypeError):
+        pass
+    return False
+
+
 def environment(original: dict | None = None) -> dict:
     env = dict(os.environ if original is None else original)
     root = Path(env.get("ROCM_PATH", "/opt/rocm"))
     # TheRock's Python packages initialize their matching libraries themselves.
     # Injecting /opt/rocm or its RCCL into them would mix two different stacks.
     python_sdk = not env.get("ROCM_PATH") and _python_rocm_sdk()
-    if root.is_dir() and not python_sdk:
+    native_rocm = bool(env.get("ROCM_PATH")) or _tensorflow_rocm_build()
+    if root.is_dir() and not python_sdk and native_rocm:
         env.setdefault("ROCM_PATH", str(root))
         for key, paths in {
             "PATH": [root / "bin", root / "llvm/bin"],

@@ -131,7 +131,7 @@ def test_http_auth_body_limits_and_service_extraction():
 
 
 def test_merged_transcription_uses_configured_variant_not_fuzzy_matching():
-    words = [word("Haimomo", 1, 1.8)]
-    assert find_phrases(words, ["hey momo"], 30, {}) == []
-    result = find_phrases(words, ["hey momo", "hai momo"], 30, {})
-    assert len(result) == 1 and result[0]["phrase"] == "hai momo"
+    words = [word("Hainova", 1, 1.8)]
+    assert find_phrases(words, ["hey nova"], 30, {}) == []
+    result = find_phrases(words, ["hey nova", "hai nova"], 30, {})
+    assert len(result) == 1 and result[0]["phrase"] == "hai nova"
