@@ -223,11 +223,15 @@ kein Vergleich gleicher Trainingsqualität. Prefetch wartet hier überwiegend
 auf Daten; ein begrenzter statischer TFRecord-Pool versorgt die GPU erheblich
 gleichmäßiger. Seine endliche Auswahl kann auch die Modellqualität verändern.
 
-Ein Student mit dem größeren offiziellen Profil hielt 46/47 erkannte eigene
-Prüfaufnahmen und verringerte die ausgelösten Satelliten-Negative von 5/14 auf
-3/14; der lokale Vergleich bestand. Ein zweiter Seed dieses Profils erkannte
-nur 41/47 und blieb gesperrt. Deshalb ist die Architektur allein keine Zusage
-eines besseren Ergebnisses. Zusätzlich wurden feste Thorsten-high-Sätze
+Bei der WAV-Bewertung mit Cutoff 230/255 hielt ein Student mit dem größeren
+offiziellen Profil 46/47 erkannte eigene Prüfaufnahmen und verringerte die
+ausgelösten Satelliten-Negative von 5/14 auf 3/14. Ein zweiter Seed erkannte
+nur 41/47. Die zunächst positive Parity-Entscheidung des ersten Seeds ist wegen
+der später entdeckten [Ambient-Skalierung](evaluation.md#korrektur-der-mmap-skalierung-am-14102026)
+nicht als Freigabe verwendbar; FAPH und Cutoff müssen erneut bestimmt werden.
+Der [Negativkorpus-Vergleich](negative-corpora.md) verwendet die korrigierte
+Bewertung. Deshalb ist die Architektur allein keine Zusage eines besseren
+Ergebnisses. Zusätzlich wurden feste Thorsten-high-Sätze
 offline verglichen. Die unabhängige STT las nur 14/23 Texte exakt normalisiert
 zurück und verwechselte auch den seltenen Namen. Dieser synthetische Durchgang
 bleibt daher ein begrenzter Funktionstest; er liefert keinen zusätzlichen
@@ -235,5 +239,6 @@ belastbaren Nachweis für die reale Telefonstrecke.
 
 Die kleinen Satelliten-Holdouts dienen auch Auswahl und Kalibrierung. Zwei
 Fehler weniger auf 14 Negativen belegen noch keinen stabilen Alltagsgewinn.
-Der Kandidat bleibt zur Prüfung bereit; in diesem Vergleich wurde keine
-Firmware verändert. Rohdaten, Einzelberichte und Modellgewichte bleiben privat.
+Der Kandidat benötigt eine erneute vollständige Prüfung; in diesem Vergleich
+wurde keine Firmware verändert. Rohdaten, Einzelberichte und Modellgewichte
+bleiben privat.

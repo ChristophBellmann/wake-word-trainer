@@ -29,6 +29,7 @@ The full documentation is in [docs/](docs/README.md) (also as a [GitBook](https:
 [Pipeline](docs/pipeline.md) ·
 [Evaluation](docs/evaluation.md) ·
 [Lab-Migration und Unterschiede](docs/migration-from-wakeword-lab.md) ·
+[Negativkorpora und Qualitätsvergleich](docs/negative-corpora.md) ·
 [GPU-Training und Benchmarks](docs/gpu-training-and-benchmarks.md) ·
 [Home Assistant service](docs/service.md) ·
 [Automatic deployment](docs/deployment.md) ·

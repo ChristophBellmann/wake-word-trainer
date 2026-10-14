@@ -87,6 +87,11 @@ export:
   minimum_esphome_version: 2024.7.0
 ```
 
+Die [Negativkorpus-Inventur](negative-corpora.md) erklärt aktive Auswahl,
+Sampling-Gewichte und den Vergleich mit Ersatzkorpora. Die drei alten
+`*_background`-Archive besitzen 20-ms-Features und dürfen nicht mit den
+10-ms-Features des aktuellen Trainers gemischt werden.
+
 `--downloads <folder>` on the command line shares the downloads between
 several projects.
 

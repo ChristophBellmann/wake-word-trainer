@@ -379,7 +379,10 @@ def parser() -> argparse.ArgumentParser:
         "--speech", action="append", help="more negative speech, e.g. mls_de (German audio books; repeatable)"
     )
     download.add_argument("--data", action="store_true", help="with --voice/--speech: also the shared data")
-    download.add_argument("--negative-set", action="append", help="MMAP-Negativquelle, auch *_background; wiederholbar")
+    download.add_argument(
+        "--negative-set", action="append",
+        help="MMAP-Negativquelle; wiederholbar (alte *_background: 20 ms, nicht für aktuelles Training)",
+    )
 
     sub.add_parser("fetch", help="own recordings from the collector and recordings.folders")
     data = sub.add_parser("data", help="Datenquellen mit Rollen übernehmen und vor dem Training prüfen")

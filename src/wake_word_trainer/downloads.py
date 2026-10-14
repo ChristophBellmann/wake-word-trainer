@@ -28,6 +28,9 @@ HF = "https://huggingface.co"
 
 NEGATIVE_SETS = ("speech", "dinner_party", "no_speech", "dinner_party_eval")
 ALL_NEGATIVE_SETS = (*NEGATIVE_SETS, "speech_background", "dinner_party_background", "no_speech_background")
+# The legacy *_background archives use 20 ms; the ESPHome-compatible archives
+# and this trainer use 10 ms. Downloadability does not imply compatibility.
+LEGACY_BACKGROUND_SETS = ("speech_background", "dinner_party_background", "no_speech_background")
 NEGATIVE_REPO = "kahrendt/microwakeword"
 RIR_REPO = "davidscripka/MIT_environmental_impulse_responses"
 RIR_FOLDER = "16khz"

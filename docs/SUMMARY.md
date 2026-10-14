@@ -16,6 +16,7 @@
 * [Fehlaktivierungen beim Telefonieren verringern](false-activations-workflow.md)
 * [Positive, Negative und Fehlaktivierungen prüfen](data-audit.md)
 * [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md)
+* [Negativkorpora und ihr Qualitätsvergleich](negative-corpora.md)
 * [GPU-Training und Benchmarks](gpu-training-and-benchmarks.md)
 * [Replacing a model you already use](replacing-a-model.md)
 

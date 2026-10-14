@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import signal
@@ -12,6 +13,8 @@ from pathlib import Path
 
 import yaml
 
+from .downloads import LEGACY_BACKGROUND_SETS
+from .features import STEP_MS
 from .gpu import environment
 from .project import Project, ProjectError
 
@@ -78,10 +81,16 @@ def feature_sets(project: Project, downloads: Path) -> list[dict]:
             weight = weights.get(name, weights["own_negative"])
             sets.append(_feature_set(project.features / name, weight, truth, strategy))
     negatives = downloads / "negative_datasets"
+    missing = []
     for name in project.config["negatives"]["feature_sets"]:
         if name == "dinner_party_eval":
             continue
         if (negatives / name).is_dir():
+            if name in LEGACY_BACKGROUND_SETS:
+                raise ProjectError(
+                    f"{name}: legacy HF features use 20 ms, this trainer uses {STEP_MS} ms. "
+                    "Do not mix feature cadences; regenerate from source WAVs via negatives folders."
+                )
             sets.append(
                 _feature_set(
                     negatives / name,
@@ -90,12 +99,19 @@ def feature_sets(project: Project, downloads: Path) -> list[dict]:
                     "random",
                 )
             )
+        else:
+            missing.append(name)
+    if missing:
+        logging.getLogger(__name__).warning(
+            "Configured negative feature sets unavailable and omitted: %s (downloads: %s)",
+            ", ".join(missing), negatives,
+        )
     if (negatives / "dinner_party_eval").is_dir():
         # Long background recordings: only for false activations per hour in validation and test.
         sets.append(_feature_set(negatives / "dinner_party_eval", 0.0, False, "split"))
     if not any(item["truth"] for item in sets):
         raise ProjectError("No positive features: run features first")
-    if not any(not item["truth"] for item in sets):
+    if not any(not item["truth"] and item["sampling_weight"] > 0 for item in sets):
         raise ProjectError("No negative features: run download (or generate negative phrases) first")
     return sets
 

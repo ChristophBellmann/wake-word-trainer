@@ -71,6 +71,41 @@ def test_satellite_negatives_get_their_own_share(tmp_path):
     assert weights["satellite_negative"] == 4.0 and weights["own_negative"] == 4.0
 
 
+def test_missing_configured_corpus_is_visible_and_eval_stays_out_of_training(tmp_path, caplog):
+    from wake_word_trainer.training import feature_sets
+
+    p = Project.create(tmp_path / "p", "Hey Nova", negatives={"feature_sets": ["speech"]})
+    (p.features / "own").mkdir(parents=True)
+    (p.features / "own_negative").mkdir()
+    (tmp_path / "negative_datasets/dinner_party_eval").mkdir(parents=True)
+    sets = feature_sets(p, tmp_path)
+    assert "speech" in caplog.text and "unavailable and omitted" in caplog.text
+    ambient = next(item for item in sets if item["truncation_strategy"] == "split")
+    assert ambient["sampling_weight"] == 0 and not ambient["truth"]
+    assert not any(Path(item["features_dir"]).name == "speech" for item in sets)
+
+
+def test_ambient_holdout_cannot_replace_negative_training_data(tmp_path):
+    from wake_word_trainer.training import feature_sets
+
+    p = Project.create(tmp_path / "p", "Hey Nova", negatives={"feature_sets": []})
+    (p.features / "own").mkdir(parents=True)
+    (tmp_path / "negative_datasets/dinner_party_eval").mkdir(parents=True)
+    with pytest.raises(ProjectError, match="No negative features"):
+        feature_sets(p, tmp_path)
+
+
+@pytest.mark.parametrize("name", ["speech_background", "dinner_party_background", "no_speech_background"])
+def test_legacy_corpus_cadence_is_rejected_before_training(tmp_path, name):
+    from wake_word_trainer.training import feature_sets
+
+    p = Project.create(tmp_path / "p", "Hey Nova", negatives={"feature_sets": [name]})
+    (p.features / "own").mkdir(parents=True)
+    (tmp_path / "negative_datasets" / name).mkdir(parents=True)
+    with pytest.raises(ProjectError, match=r"20 ms.*10 ms"):
+        feature_sets(p, tmp_path)
+
+
 def test_report_counts_satellite_false_activations_separately(tmp_path):
     import numpy as np
 

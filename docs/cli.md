@@ -10,7 +10,7 @@ wake-word-trainer [-p PROJECT] [--downloads FOLDER] <command> [options]
 | Command | |
 | --- | --- |
 | `init "<wake word>"` | create `wakeword.yaml`; `--language`, `--collector-url`, `--token-file` |
-| `download` | shared data and Piper voices: `--voice <name>` (repeatable), `--speech <preset>` (e.g. `mls_de`), `--data` with them also the shared data |
+| `download` | shared data and Piper voices: `--voice <name>` (repeatable), `--speech <preset>` (e.g. `mls_de`), `--data` with them also the shared data; `--negative-set <name>` repeatable, see [Negativkorpora und Kompatibilität](negative-corpora.md) |
 | `fetch` | own recordings from the collector and `recordings.folders` |
 | `data import <manifest>` / `data check` | [Datenübernahme](migration-from-wakeword-lab.md), explizite Rollen, Herkunft und Holdouts; `--dry-run` |
 | `teacher import/train/score` | optionalen Log-Mel-Teacher mit eingebetteten Parametern übernehmen, neu trainieren und prüfen |

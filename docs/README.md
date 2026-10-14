@@ -27,6 +27,8 @@ ONNX API.
 
 Vor dem Nachtraining: [Positive, Negative und Fehlaktivierungen prüfen](data-audit.md).
 Altbestände: [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md).
+[Negativkorpora und Qualitätsvergleich](negative-corpora.md) zeigen, welche
+MMAPs tatsächlich trainiert werden und welche Frontends kompatibel sind.
 Leistung: [GPU-Training und reproduzierbare Benchmarks](gpu-training-and-benchmarks.md).
 
 1. [Install](installation.md) the trainer on a computer with a GPU.
