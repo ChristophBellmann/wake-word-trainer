@@ -204,3 +204,35 @@ Feature-Bau und CPU-Bewertung. Der Trainingsprozess erbt dieselbe Belegung.
 Damit kann weder die Nachtplanung noch ein LLM zwischen zwei Trainingsphasen
 die GPU übernehmen oder die Workstation in Standby schicken. Ein reiner
 `run --prepare-only` reserviert keine GPU.
+
+## Längerer Vergleich mit übernommenen Korpora
+
+Neun getrennte Student-Läufe auf demselben eingefrorenen Prüfbestand wurden
+am 14.10.2026 abgeschlossen. Der große Bestand verändert das Verhältnis
+zwischen Input und GPU-Rechenarbeit deutlich:
+
+| Zuführung | Batch | Schritte bis Frühstopp | Trainingsloop | Input-Wartezeit | Rechenzeit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| TFRecord | 256 | 7.500 | 165,3 s | 2,1 s | 119,3 s |
+| Prefetch | 256 | 5.000 | 425,4 s | 304,3 s | 85,4 s |
+| Prefetch | 512 | 5.250 | 712,6 s | 486,9 s | 171,6 s |
+
+Die Loop-Zeiten enthalten Validierung; TFRecord-Bau, Feature-Vorbereitung,
+Export und int8-Nachprüfung sind separat. Unterschiedliche Schrittzahlen sind
+kein Vergleich gleicher Trainingsqualität. Prefetch wartet hier überwiegend
+auf Daten; ein begrenzter statischer TFRecord-Pool versorgt die GPU erheblich
+gleichmäßiger. Seine endliche Auswahl kann auch die Modellqualität verändern.
+
+Ein Student mit dem größeren offiziellen Profil hielt 46/47 erkannte eigene
+Prüfaufnahmen und verringerte die ausgelösten Satelliten-Negative von 5/14 auf
+3/14; der lokale Vergleich bestand. Ein zweiter Seed dieses Profils erkannte
+nur 41/47 und blieb gesperrt. Deshalb ist die Architektur allein keine Zusage
+eines besseren Ergebnisses. Bei unabhängigen sauberen Thorsten-high-Sätzen
+erkannten alle Modelle 9/9 positive Kontrollen; 60 Gesprächsnegative lösten
+6-mal beim eingesetzten Modell und 2-mal beim ersten Kandidaten aus. Diese
+synthetische Prüfung ersetzt neue reale Telefonaufnahmen nicht.
+
+Die kleinen Satelliten-Holdouts dienen auch Auswahl und Kalibrierung. Zwei
+Fehler weniger auf 14 Negativen belegen noch keinen stabilen Alltagsgewinn.
+Der Kandidat bleibt zur Prüfung bereit; in diesem Vergleich wurde keine
+Firmware verändert. Rohdaten, Einzelberichte und Modellgewichte bleiben privat.

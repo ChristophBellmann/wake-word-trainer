@@ -153,6 +153,18 @@ alten Checkpoints kompatibel. Die Architektur steht im portablen Checkpoint;
 ein Warmstart muss dieselbe Architektur verwenden. Auch der neue Teacher nutzt
 ausschließlich Log-Mel-Features und benötigt einen eigenen Qualitätsvergleich.
 
+Im Vergleich vom 14.10.2026 erkannte ein neuer temporaler Teacher bei 0,5
+alle 47 eigenen Prüfpositive und reagierte auf 4/319 Negative. Bei den aktuellen
+Satellitenclips waren es 14/14 erkannte Aufrufe und 1/14 Fehlentscheidungen.
+Eine auf diesem Bestand kalibrierte Schwelle von 0,89 behielt 46/47 Positive
+bei 0/319 Negativfehlern. Das ist ein hilfreicher Prüfkandidat, kein unabhängiger
+Nachweis einer Nullfehlerrate. Die Labelprüfung bleibt erforderlich; insbesondere
+darf ein leerer STT-Text nicht automatisch negativ werden.
+
+Der gemeinsame STFT-Pfad wurde an 3-, 10- und 30-Sekunden-Signalen mit drei
+Wiederholungen verglichen: rund drei- bis fünffach schneller, größte absolute
+Feature-Abweichung unter 5e-7. Alle ursprünglichen Fenster bleiben erhalten.
+
 Microfrontend-MMAPs bleiben ausgeschlossen. Audio-Augmentation und das
 vollständige alte Teacher-Regime werden damit noch nicht reproduziert. Der
 Lauf aktiviert weder Teacher-Loss im Student noch Rollout. Erst der Vergleich
