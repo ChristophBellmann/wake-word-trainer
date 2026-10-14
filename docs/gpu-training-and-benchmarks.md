@@ -1,5 +1,9 @@
 # GPU-Training und reproduzierbare Benchmarks
 
+[Softwarestack, Compiler und Optimierung](software-stack-and-compiler.md)
+erklärt die beteiligte ML-Software und unterscheidet Framework-Neubau,
+Graph-Ausführung, GPU-Kernels und Modellqualität.
+
 Der [ROCm-/MIOpen-Vergleich](rocm-update.md) dokumentiert den separat geprüften
 neuen AMD-Stack, den Teacher-Durchsatz und die Vorbereitung eines Systemumzugs.
 

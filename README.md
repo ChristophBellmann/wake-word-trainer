@@ -31,6 +31,7 @@ The full documentation is in [docs/](docs/README.md) (also as a [GitBook](https:
 [Lab-Migration und Unterschiede](docs/migration-from-wakeword-lab.md) ·
 [Negativkorpora und Qualitätsvergleich](docs/negative-corpora.md) ·
 [GPU-Training und Benchmarks](docs/gpu-training-and-benchmarks.md) ·
+[Softwarestack, Compiler und Optimierung](docs/software-stack-and-compiler.md) ·
 [Home Assistant service](docs/service.md) ·
 [Automatic deployment](docs/deployment.md) ·
 [Idle-night training](docs/automatic-training.md) ·

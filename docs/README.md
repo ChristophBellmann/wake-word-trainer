@@ -30,6 +30,7 @@ Altbestände: [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-
 [Negativkorpora und Qualitätsvergleich](negative-corpora.md) zeigen, welche
 MMAPs tatsächlich trainiert werden und welche Frontends kompatibel sind.
 Leistung: [GPU-Training und reproduzierbare Benchmarks](gpu-training-and-benchmarks.md).
+Technik: [Softwarestack, Compiler und Optimierung](software-stack-and-compiler.md).
 GPU-Umgebung: [ROCm-/MIOpen-Update und Umzug vorbereiten](rocm-update.md).
 
 1. [Install](installation.md) the trainer on a computer with a GPU.

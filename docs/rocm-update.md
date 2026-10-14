@@ -1,5 +1,9 @@
 # ROCm und MIOpen aktualisieren
 
+[Softwarestack, Compiler und Optimierung](software-stack-and-compiler.md)
+erklärt die Rollen der Frameworks, Host-/GPU-Compiler, Build-Einstellungen
+und die technischen Nachweise dieser Anwendung.
+
 Ein neuer GPU-Stack wird zuerst getrennt verglichen. Die
 [AMD-Kompatibilitätsmatrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
 und der [TheRock-Entwicklungsstand](https://github.com/ROCm/TheRock/blob/main/SUPPORTED_GPUS.md)
