@@ -1,33 +1,35 @@
-# Command line
+# Kommandozeile
 
 ```text
 wake-word-trainer [-p PROJECT] [--downloads FOLDER] <command> [options]
 ```
 
-`-p` is the project folder with `wakeword.yaml` (default: current folder),
-`--downloads` a shared download folder (default: `<project>/downloads`).
+`-p` wählt das Projekt mit `wakeword.yaml`; Standard ist das aktuelle
+Verzeichnis. `--downloads` wählt einen gemeinsamen Downloadordner,
+standardmäßig `<projekt>/downloads`. Optionen erscheinen auch mit `--help`.
 
-| Command | |
+| Befehl | Zweck |
 | --- | --- |
-| `init "<wake word>"` | create `wakeword.yaml`; `--language`, `--collector-url`, `--token-file` |
-| `download` | shared data and Piper voices: `--voice <name>` (repeatable), `--speech <preset>` (e.g. `mls_de`), `--data` with them also the shared data; `--negative-set <name>` repeatable, see [Negativkorpora und Kompatibilität](negative-corpora.md) |
-| `fetch` | own recordings from the collector and `recordings.folders` |
-| `data import <manifest>` / `data check` | [Datenübernahme](migration-from-wakeword-lab.md), explizite Rollen, Herkunft und Holdouts; `--dry-run` |
-| `teacher import/train/score` | optionalen Log-Mel-Teacher mit eingebetteten Parametern übernehmen, neu trainieren und prüfen |
-| `experiment prepare/run` | eingefrorene Seed-Vergleiche ohne Rollout; `prepare --seed <n>` wiederholbar, `--model-profile`, `--output` |
-| `benchmark` | [GPU-Durchsatz](gpu-training-and-benchmarks.md) mit echten Features, getrennten Prozessen, Aufwärmen und Wiederholungen; kein Rollout |
-| `review` | ungeprüfte Clips über den Collector-Token abrufen: `--device`, `--since`, `--limit`, `--stt-model`, `--threads`, optionale `--model`/`--teacher`; private Snapshots und keine Labeländerung, siehe [HA-Prüfung](home-assistant-review.md) |
-| `audit` | [Datenprüfung](data-audit.md): lokale STT, optionale `--model`-Bewertung, zusätzliche `--positive-folder`, `--negative-folder`, `--unlabelled-folder`; keine Labeländerung |
-| `generate` | synthetic speech with Piper; `--force` regenerates |
-| `features` | augmented spectrograms |
-| `train` | train the model; `--restart` ignores the last checkpoint |
-| `evaluate` | recall on own recordings, false activations, cutoff |
-| `export` | model and manifest for ESPHome |
-| `run` | everything; `--rounds`, `--steps`, `--resume`, `--force`, `--prepare-only` |
-| `compare` | several models on the same evaluation data; `--model <tflite>` (repeatable), `--current` |
-| `mine` | collect what the trained model wrongly reacts to |
-| `status` | progress of the current or last run |
-| `deploy` | retry the configured firmware rollout; `--compare` compares first |
-| `serve --config <yaml>` | HTTP service for Home Assistant |
+| `init "<aktivierungswort>"` | Projekt anlegen; `--language`, `--collector-url`, `--token-file` |
+| `download` | Korpora, Features und Stimmen; `--voice`, `--speech`, `--negative-set`, `--data` |
+| `fetch` | freigegebene Collector-Aufnahmen und lokale Aufnahmeordner übernehmen |
+| `data import <manifest>` / `data check` | [Datenrollen und Herkunft](data-import.md) importieren und prüfen; `--dry-run`, `--rehash` |
+| `teacher import/train/score` | optionalen Log-Mel-Teacher übernehmen, trainieren oder bewerten |
+| `experiment prepare/run` | eingefrorene Seed-Vergleiche ohne Rollout |
+| `benchmark` | [GPU-Durchsatz](gpu-training-and-benchmarks.md) in getrennten Prozessen mit Aufwärmen und Wiederholungen |
+| `audit` | lokale Quellen mit STT und optionalen Modellen prüfen, ohne Labels zu ändern |
+| `review` | ungeprüfte Aufnahmen über HA abrufen; `--device`, `--since`, `--limit`, `--stt-model`, `--threads`, `--model`, `--teacher` |
+| `generate` | Piper-Sprache erzeugen; `--force` neu erzeugen |
+| `features` | augmentierte Microfrontend-Features bauen |
+| `train` | Student trainieren; `--restart` ohne alten Checkpoint |
+| `evaluate` | Erkennung, Fehlalarme und Schwellenkurve bewerten |
+| `export` | ESPHome-Modell und Manifest schreiben |
+| `run` | vollständiger Ablauf; `--rounds`, `--steps`, `--resume`, `--force`, `--prepare-only` |
+| `compare` | mehrere Modelle am gleichen Audio vergleichen; wiederholbares `--model`, `--current` |
+| `mine` | falsch ausgelöste negative Trainingsfenster sammeln |
+| `status` | aktuellen oder letzten Lauf anzeigen |
+| `deploy` | konfigurierten geprüften Rollout wiederholen; `--compare` vorher vergleichen |
+| `serve --config <yaml>` | Trainer-Dienst für Home Assistant starten |
 
-`wake-word-trainer --version` prints the version.
+`wake-word-trainer --version` meldet die installierte Programmversion.
+Privatberichte und Sprachdaten werden nicht in das öffentliche Git übernommen.

@@ -89,8 +89,8 @@ Feature-Parameter aus der ursprünglichen YAML gemeinsam gespeichert. Die
 alte Konfiguration wird danach nicht mehr benötigt.
 
 ```bash
-wake-word-trainer -p my_project teacher import /private/lab/best_model.pt \
-  --config /private/lab/teacher.yaml --output teacher/legacy.pt
+wake-word-trainer -p my_project teacher import /private/source/best_model.pt \
+  --config /private/source/teacher.yaml --output teacher/legacy.pt
 wake-word-trainer -p my_project audit --teacher teacher/legacy.pt \
   --unlabelled-folder activation_clips
 wake-word-trainer -p my_project teacher train --epochs 30 --seed 1337
@@ -101,7 +101,7 @@ wake-word-trainer -p my_project teacher score --model teacher/model.pt \
 Importiert werden ausschließlich kompatible Log-Mel-v2-Gewichte. Eine
 Legacy-Konfiguration mit `negative_mmap_roots` wird verweigert: Diese Modelle
 können mit unterschiedlichen Feature-Räumen trainiert worden sein. Ein
-Schwellwert aus dem alten Lab muss auf aktuellen Aufnahmen erneut geprüft
+Schwellwert eines anderen Modells muss auf aktuellen Aufnahmen erneut geprüft
 werden. `teacher score` schreibt Maximum und 95-%-Quantil gleitender Fenster;
 das sind rohe Teacher-Scores, keine kalibrierten Labelwahrscheinlichkeiten.
 
@@ -153,22 +153,10 @@ alten Checkpoints kompatibel. Die Architektur steht im portablen Checkpoint;
 ein Warmstart muss dieselbe Architektur verwenden. Auch der neue Teacher nutzt
 ausschließlich Log-Mel-Features und benötigt einen eigenen Qualitätsvergleich.
 
-Im Vergleich vom 14.10.2026 erkannte ein neuer temporaler Teacher bei 0,5
-alle 47 eigenen Prüfpositive und reagierte auf 4/319 Negative. Bei den aktuellen
-Satellitenclips waren es 14/14 erkannte Aufrufe und 1/14 Fehlentscheidungen.
-Eine auf diesem Bestand kalibrierte Schwelle von 0,89 behielt 46/47 Positive
-bei 0/319 Negativfehlern. Das ist ein hilfreicher Prüfkandidat, kein unabhängiger
-Nachweis einer Nullfehlerrate. Die Labelprüfung bleibt erforderlich; insbesondere
-darf ein leerer STT-Text nicht automatisch negativ werden.
-
-Der gemeinsame STFT-Pfad wurde an 3-, 10- und 30-Sekunden-Signalen mit drei
-Wiederholungen verglichen: Faktor 3,2 bis 5,6 schneller, größte absolute
-Feature-Abweichung unter 5e-7. Alle ursprünglichen Fenster bleiben erhalten.
-
 Microfrontend-MMAPs bleiben ausgeschlossen. Audio-Augmentation und das
-vollständige alte Teacher-Regime werden damit noch nicht reproduziert. Der
+ein separates Teacher-Trainingsregime müssen eigenständig bewertet werden. Der
 Lauf aktiviert weder Teacher-Loss im Student noch Rollout. Erst der Vergleich
 auf heutigen Satellitenaufnahmen entscheidet, ob der neue Teacher hilft.
 
 Für Herkunft, sichere Datenübernahme und getrennte Seed-Läufe:
-[Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md).
+[Datenübernahme mit Herkunft](data-import.md).

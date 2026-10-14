@@ -1,7 +1,7 @@
-# Clip extraction from long recordings
+# Clips aus langen Aufnahmen ausschneiden
 
-Install the optional `segment` extra (`pip install ".[segment]"`, using your
-existing constraints on ROCm) and enable `extraction` in the service YAML:
+Das Extra `segment` installiert faster-whisper. In der vorhandenen geprüften
+Umgebung mit deren Framework-Constraints installieren und lokal freigeben:
 
 ```yaml
 extraction:
@@ -10,27 +10,35 @@ extraction:
   cpu_threads: 4
   padding_ms: 200
   min_probability: 0.35
+  silence_ms: 500
 ```
 
-The Collector sends a manual recording to authenticated `POST /v1/extract`
-(WAV body, `X-Wakeword-Phrases` JSON list of its configured phrase and variants).
-Local faster-whisper CPU/int8 recognition produces word timestamps. Use a current
-model conversion with `alignment_heads` metadata (the default `small` download
-provides it); older Wyoming model folders may lack word alignment support. The
-service returns complete matching phrases with bounded padding; it does not
-write recordings into the training project. Audio is processed in memory and is not stored on the workstation. Models may be downloaded once; audio is never sent to a cloud.
-The project's `language` selects the recognition language. The model is
-independent of the wake-word model being trained, so missed wake-word
-activations do not exclude examples. Extraction runs serially on the CPU
-without pausing GPU services or changing the active training run.
+Der Collector sendet eine manuelle WAV-Aufnahme an das authentifizierte
+`POST /v1/extract`; `X-Wakeword-Phrases` enthält die konfigurierte Phrase und
+Varianten als JSON-Liste. CPU-/int8-STT liefert Wortzeiten und vollständige
+passende Phrasen mit begrenztem Kontext. Das Modell sollte `alignment_heads`
+enthalten, wie die normale aktuelle Konvertierung von `small`.
 
-Requests are bounded to 4 MiB and 0.5–120 seconds of mono PCM16 WAV (16/48 kHz).
-`/v1/status` advertises `extraction.enabled` and `extraction.available`.
-Recognition is imperfect: difficult pronunciations may need additional
-Collector variants or manual editing. Clips must be listened to and accepted
-in the Collector before training. Speech regions are recognized separately so repeated identical phrases are
-not collapsed by transcription. `silence_ms` (default 500) controls separation.
-A second between repetitions helps cutting.
+```mermaid
+flowchart LR
+  A[Manuelle Originalaufnahme in HA] --> B[Lokale unabhängige STT]
+  B --> C[Wortzeiten und vollständige Phrase]
+  C --> D[Ausschnitte zurück an Collector]
+  D --> E[Anhören und freigeben]
+  A --> F[Original bleibt erhalten]
+```
 
-The collector shows extracted clips as *to check*; the original recording
-stays in Home Assistant.
+Audio wird auf der Workstation im Speicher verarbeitet und für diese Extraktion
+nicht abgelegt oder an eine Cloud gesendet. Der Trainer importiert die
+Ausschnitte nicht selbst in das Training. Der Collector behält das Original
+und zeigt Ausschnitte zur Prüfung an.
+
+Erlaubt sind höchstens 4 MiB, 0,5–120 Sekunden, mono PCM16 und 16/48 kHz.
+Die Projekt-Sprache wählt die Erkennungssprache. `silence_ms` trennt Regionen,
+sodass wiederholte identische Phrasen nicht zu einem einzigen Text kollabieren.
+Etwa eine Sekunde Pause zwischen Aufrufen hilft beim Schneiden.
+
+Extraktion läuft seriell auf CPU ohne Pausieren von GPU-Diensten und unabhängig
+vom Wakeword-Modell. Schwierige Aussprachen können trotzdem fehlen; Varianten,
+Anhören und manuelles Schneiden bleiben nötig. `/v1/status.extraction` zeigt
+Freigabe und Verfügbarkeit.

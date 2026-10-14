@@ -1,56 +1,49 @@
-# Negativkorpora aus dem Wakeword Lab
+# Negativkorpora: Auswahl und Qualitätsvergleich
 
-Die vorgefertigten Korpus-Negative werden bereits verwendet: `speech`,
-`dinner_party` und `no_speech` gehören zu den Standardquellen des Students.
-`dinner_party_eval` ist ausschließlich Ambient für Validation und Prüfung,
-mit Sampling-Gewicht null. Zusätzliche WAV-Korpora kommen getrennt hinzu.
-Diese Microfrontend-MMAPs gehören nicht in den Log-Mel-Teacher.
+Der Student verwendet standardmäßig die vorgefertigten Microfrontend-Quellen
+`speech`, `dinner_party` und `no_speech`. `dinner_party_eval` bleibt ausschließlich
+Ambient für Validierung und Prüfung mit Sampling-Gewicht null. Eigene
+bestätigte Fehlaktivierungen und externe WAV-Sprache haben eigene Anteile.
 
-## Was tatsächlich vorhanden ist
+## Quellen und Feature-Kompatibilität
 
-Inventur vom 14.10.2026. Die Zahlen zählen MMAP-Einträge, keine individuellen
-Sprecher oder unabhängigen Gespräche. Wiederholte Ausschnitte derselben
-Aufnahme sind nicht unabhängige Beobachtungen.
+Die [Hugging-Face-Quellenbeschreibung](https://huggingface.co/datasets/kahrendt/microwakeword/blob/main/README.md)
+dokumentiert die Audioherkunft und die Frontend-Fassungen. Einige Background-
+Archive verwenden 20-ms-Schritte; der aktuelle Student und ESPHome benötigen
+10-ms-Features. Diese Archive sind herunterladbar, aber nicht unverändert für
+das aktuelle Student-Training auswählbar. Aus den Original-WAVs passende
+Features neu erzeugen; Float-Casts oder Frame-Verdopplung ersetzen das nicht.
 
-| HF-Archiv | Trainings-Einträge im alten Bestand | Bisherige neue Läufe | Standardgewicht |
-| --- | ---: | --- | ---: |
-| `speech` | 350.535 | als Negative enthalten | 10 |
-| `dinner_party` | 58.307 | als Negative enthalten | 10 |
-| `no_speech` | 238.441 | als Negative enthalten | 5 |
-| `dinner_party_eval` | 0; 4 Validation- und 10 Prüfaufnahmen | ausschließlich Ambient-Holdout | 0 |
-| `speech_background` | 630.158 | nicht enthalten; alte 20-ms-Features | — |
-| `dinner_party_background` | 29.153; zusätzlich Ambient-Holdouts | nicht enthalten; alte 20-ms-Features | — |
-| `no_speech_background` | 228.518 | nicht enthalten; alte 20-ms-Features | — |
+| Quelle | Rolle | Standardgewicht |
+| --- | --- | ---: |
+| `speech` | negative Sprache | 10 |
+| `dinner_party` | negative Gespräche | 10 |
+| `no_speech` | andere Negativgeräusche | 5 |
+| `dinner_party_eval` | Ambient-Holdout | 0 |
+| `speech_background`, `dinner_party_background`, `no_speech_background` | abweichende 20-ms-Archive; aktuelle Auswahl wird abgelehnt | — |
 
-Die ersten vier entpackten Archive belegen hier ungefähr 25 GiB. Die drei
-zusätzlichen belegen im alten Bestand weitere rund 17 GiB. Alle sieben
-Archive lassen sich herunterladen; das bedeutet nicht, dass alle mit dem
-aktuellen Frontend kompatibel sind.
+```mermaid
+flowchart TD
+  A[Korpus herunterladen] --> B{Frontend passt?}
+  B -->|10 ms und passende Form| C[Student-Negative]
+  B -->|Abweichende Features| D[Original-WAVs verwenden]
+  D --> E[Microfrontend neu berechnen]
+  E --> C
+  F[Bestätigte eigene Fehlalarme] --> C
+  G[Prüfkorpus] --> H[Ambient-Bewertung]
+  H -. kein Optimierer .-> C
+```
 
-Die sechs alten Trainingsquellen umfassen zusammen **1.535.112 Einträge**;
-die drei kompatiblen aktuellen HF-Trainingsquellen **647.283 Einträge**.
-Diese Summe ist keine Zahl einzigartiger Audios: etwa die beiden CHiME-
-Fassungen enthalten überlappende Originalaufnahmen bei anderem Frontend.
+MMAP-Einträge sind Ausschnitte, keine unabhängigen Sprecher oder Gespräche.
+Überlappende Quellaufnahmen und verschiedene Frontend-Fassungen dürfen nicht
+als unabhängige Datenmenge addiert werden. Ein Korpus mit mehr als einer Million
+Einträgen kann nützlich sein; Sampling, Leakage und Ergebnis sind entscheidend.
+Diese MMAPs gehören nicht in den Log-Mel-Teacher, der WAVs benötigt.
 
-Die [HF-Quellenbeschreibung](https://huggingface.co/datasets/kahrendt/microwakeword/blob/main/README.md)
-nennt für die älteren Background-Archive 20-ms-Schritte und beschreibt
-CHiME6/DipCo-Gespräche, LibriSpeech/VOiCES sowie FMA/FSD50K/WHAM. Der Trainer
-und die ESPHome-Modelle benötigen 10-ms-Features. Im lokalen DipCo-Bestand
-enthält die ältere Background-Fassung für dasselbe Audio halb so viele
-Frames wie `dinner_party_eval`. Die Auswahl eines vorhandenen alten
-`*_background`-Archivs wird deshalb vor dem Training mit einem konkreten
-Fehler abgelehnt. Ein Float-Cast oder Verdoppeln der Frames regeneriert
-keine passenden Microfrontend-Features. Dafür die Original-WAVs verwenden.
-
-Unter dem Namen „Coffee Talk“ fand sich in den geprüften Lab-Skripten,
-Manifesten und Downloadquellen kein eigener Datensatz. `dinner_party` ist
-anhand seiner MMAP-Namen als CHiME-Gesprächsbestand identifiziert. Eine
-Gleichsetzung mit einem weiteren namensähnlichen Korpus ist nicht belegt.
-
-## Download und aktive Auswahl
+## Download und Auswahl
 
 ```bash
-wake-word-trainer -p project --downloads shared_downloads download \
+wake-word-trainer -p my_project --downloads shared_downloads download \
   --negative-set speech --negative-set dinner_party \
   --negative-set no_speech --negative-set dinner_party_eval
 ```
@@ -63,139 +56,34 @@ training:
     speech: 10
     dinner_party: 10
     no_speech: 5
+    satellite_negative: 4
 ```
 
-Der Download legt Daten ab; `negatives.feature_sets` bestimmt die Auswahl.
-Fehlende konfigurierte Trainingsquellen werden im Log ausdrücklich gemeldet.
-`training_parameters.yaml` dokumentiert die tatsächlich verwendeten Pfade,
-Gewichte und Datenrollen. Dort nachprüfen, statt aus vorhandenen ZIP-Dateien
-oder einem alten YAML-Manifest auf die Nutzung zu schließen.
+Die Gewichte bestimmen Quellanteile, nicht die Zahl geladener Dateien.
+Eigene Satelliten-Negative dürfen durch größere öffentliche Korpora nicht
+praktisch verschwinden. Speichermapping lädt den Bestand nicht vollständig
+in den RAM; Zuführung und Cache müssen trotzdem begrenzt werden.
 
-`dinner_party_eval` bleibt bei vorhandenem Download für die Bewertung erhalten,
-auch wenn die drei Trainingsquellen aus `feature_sets` entfernt werden. Das
-ermöglicht einen Vergleich auf unverändertem Ambient-Audio.
+## Verbessert ein Korpus das Modell?
 
-## Welche alten Hilfsmittel weitergeführt werden
+Mit eingefrorenen Aufnahmen mindestens zwei Seeds vergleichen:
 
-| Altes Werkzeug | Heutiger Ablauf |
-| --- | --- |
-| `scripts/setup/setup_sync_datasets.py` | `download --negative-set`, Sprach-Presets, `data import`, `features`; vorhandene kompatible MMAPs direkt wiederverwenden |
-| `scripts/setup/setup_fetch_notebook_backgrounds.py` | vorhandene AudioSet-/FMA-WAVs als `negative_background` importieren; eigene Features mit 10 ms erzeugen |
-| `scripts/train_from_config.sh` | `wakeword.yaml` und `train`/`run`; tatsächlich erzeugte Backend-Konfiguration nachsehen |
-| `docs/training_dataset.md` | Rollen weiterhin trennen: Korpus-Negative, WAV-Augmentation, Ambient-Holdout und RIR |
+1. Standardkorpora mit bisherigen Sampling-Anteilen.
+2. Korpus entfernt: verändert auch die normalisierte Verteilung.
+3. Gleiche Sampling-Masse durch andere negative WAV-Quellen ersetzt.
 
-In den eingefrorenen Vergleichsläufen sind bereits 15.839 Sprach-WAVs aus
-VoxPopuli Deutsch/Englisch und LibriSpeech sowie 41.235 AudioSet-/FMA-WAVs
-übernommen. Ihre inhaltlich getrennten Training-/Validation-/Testseiten
-bleiben erhalten. Raumimpulse und die Hintergrundstichprobe für
-Audio-Augmentation erfüllen andere Rollen.
+Prüfclips und Ambient-Stunden bleiben identisch und außerhalb des Trainings.
+Erkennungsrate, eigene Negativfehler, Satelliten-Negativfehler und Ambient-
+Fehler pro Stunde gemeinsam bewerten. Ein schnellerer Trainingsloop oder
+weniger Fehler bei zugleich schlechterer Erkennung ist kein Erfolg.
 
-## Vergleich mit und ohne HF-Korpus-Negative
+Der TFRecord-Pool ist eine endliche Auswahl aus diesen Quellen. Eine Million
+Pool-Beispiele kostet mehr Datenträger, Bauzeit und Shuffle-Speicher. Pool-
+Größe getrennt bei denselben Seeds vergleichen; aus dem Durchsatz darf keine
+Qualitätsverbesserung abgeleitet werden. Ein größerer Bestand wird nur nach
+bestandener Regression aktiviert.
 
-Die frühere [Ambient-Skalierung wurde korrigiert](evaluation.md#korrektur-der-mmap-skalierung-am-14102026).
-Frühere FAPH-Zahlen und davon abhängige Parity-Freigaben müssen neu berechnet
-werden. Eigene WAV-Trefferzahlen waren davon nicht betroffen.
-
-Der kontrollierte Vergleich verwendet das offizielle Modellprofil, Batch 256,
-GPU, optimierten TFRecord-Eingang, dieselben eingefrorenen Features, Seeds
-`2026070716` und `2026070722`, identischen Frühstopp sowie unveränderte
-47 positive und 319 negative Prüfclips, darunter 14 Satelliten-Negative.
-Das Ambient-Prüfaudio bleibt dasselbe. Kein Mining, Collector-Sync oder
-Firmware-Rollout erfolgt während der Vergleiche.
-
-Einfaches Entfernen der drei Quellen verändert auch die Sampling-Verteilung:
-Die verbleibenden Gewichte werden normalisiert, also steigen die Anteile
-eigener Aufnahmen und TTS. Deshalb gibt es zusätzlich einen Vergleich mit
-Ersatz durch die bereits vorhandenen WAV-Sprach-/Hintergrundkorpora:
-`speech_extra: 25`, `background_negative: 10` statt jeweils 5. Die wegfallende
-HF-Gewichtsmasse 25 wird dadurch ersetzt; positive/negative Gesamtsampling-
-Masse und Klassengewichte bleiben wie beim Ausgangsmodell. Das prüft den
-Nutzen gegenüber diesen konkreten Ersatzkorpora.
-
-### Ergebnisse mit korrigierter Inferenz
-
-Vier neue GPU-Trainingsläufe wurden mit den beiden bereits vorhandenen
-HF-Ausgangsmodellen verglichen. Alle sechs Modelle und das laufende Modell
-wurden anschließend mit korrekter MMAP-Skalierung und ganzzahligen
-8-Bit-Fenstersummen auf demselben Audio neu bewertet.
-
-Bei identischer Schwelle **230/255**:
-
-| Variante | Seed-Ende | Positive / 47 | Eigene Negativfehler / 319 | Satellitenfehler / 14 | Ambient-Fehler/h |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| HF-Standardquellen | 16 | 46 | 3 | 3 | 0,562 |
-| HF entfernt | 16 | 45 | 6 | 4 | 0,750 |
-| HF durch WAV-Korpora ersetzt, Sampling-Masse gleich | 16 | 43 | 4 | 3 | 0,187 |
-| HF-Standardquellen | 22 | 41 | 2 | 2 | 0,000 |
-| HF entfernt | 22 | 45 | 6 | 4 | 1,312 |
-| HF durch WAV-Korpora ersetzt, Sampling-Masse gleich | 22 | 44 | 7 | 5 | 0,000 |
-| Laufendes Modell als Referenz | — | 46 | 5 | 5 | 0,000 |
-
-Die gleiche Zahl erkannter Wakewords ist die bessere Vergleichsbasis als
-allein die gleiche numerische Schwelle. Bei mindestens **46/47 Treffern**,
-jeweils mit der höchsten noch möglichen 8-Bit-Schwelle:
-
-| Variante | Seed-Ende | Ambient-Fehler/h | Satellitenfehler / 14 |
-| --- | ---: | ---: | ---: |
-| HF-Standardquellen | 16 | 0,562 | 3 |
-| HF entfernt | 16 | 3,562 | 7 |
-| HF durch WAV-Korpora ersetzt | 16 | 7,311 | 8 |
-| HF-Standardquellen | 22 | 4,499 | 7 |
-| HF entfernt | 22 | 14,810 | 6 |
-| HF durch WAV-Korpora ersetzt | 22 | 10,873 | 7 |
-| Laufendes Modell als Referenz | — | 0,000 | 4 |
-
-**Entscheidung:** Die drei kompatiblen HF-Quellen bleiben enthalten. Auf
-beiden Seeds senken sie bei vergleichbarer Erkennung die Ambient-Fehler
-gegenüber Entfernen und diesen konkreten Ersatzkorpora. Es gibt zugleich
-Zielkonflikte und deutliche Seed-Streuung. Keines dieser sechs Modelle
-verbessert die laufende Referenz unter dem festgelegten Budget bei gleicher
-Erkennung. Kein Modell wurde ausgerollt.
-
-Bei einem beobachteten Budget von 0,1 Fehler/h erkennt HF-Seed 16 nur 43/47,
-HF-Seed 22 41/47. Ohne HF sind es 45/47 beziehungsweise 0/47: Beim zweiten
-Seed erreicht erst 255/255 das Budget, dort darf kein Wakeword auslösen.
-Die zuvor durch Float-Rundung angezeigten Treffer oberhalb von 1,0 sind
-entfernt. Die Ersatzvarianten erreichen 43/47 beziehungsweise 44/47.
-
-Das Ambient-Audio umfasst 5,334 Stunden. Ein Fehler entspricht rund
-0,187 Fehlern/h; null beobachtete Fehler belegen daher noch keine stabile
-Alltagsrate unter 0,1/h. Diese kleinen, bereits zur Auswahl verwendeten
-Holdouts sind kein unabhängiger Alltagstest. Dafür weitere bestätigte
-Collector-Negative und einen neuen Prüfbestand sammeln.
-
-## Korpusgröße und TFRecord-Pool unterscheiden
-
-`training.tfrecord_examples: 65536` begrenzt den einmal gezogenen statischen
-Eingangspool, nicht den Downloadbestand. Ein langer Lauf liest diesen Pool
-wiederholt; SpecAugment zieht dabei neue Masken. Mehr als eine Million
-verarbeitete Beispiele bedeuten deshalb nicht mehr als eine Million
-unterschiedliche Korpus-Clips. Der Standardpfad `prefetch` zieht fortlaufend
-aus den vollständigen Quellen, ist auf diesem Bestand aber deutlich langsamer.
-
-Ein zusätzlicher Vergleich mit **1.048.576 gezogenen Pool-Beispielen** auf
-denselben beiden Seeds prüft diese mögliche Begrenzung separat. Quellen,
-Gewichte, Architektur, Features, Batchgröße und Prüfaudio bleiben dabei
-identisch. Der Pool ist hier rund 32 GiB groß und wird als Datenträgerdatei
-gestreamt. Beide GPU-Läufe sind abgeschlossen, bei Cutoff 230/255:
-
-| Pool | Seed-Ende | Positive / 47 | Eigene Negativfehler / 319 | Satellitenfehler / 14 | Ambient-Fehler/h |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 65.536, HF-Standard | 16 | 46 | 3 | 3 | 0,562 |
-| 1.048.576, gleiche Quellen | 16 | 46 | 8 | 6 | 0,000 |
-| 65.536, HF-Standard | 22 | 41 | 2 | 2 | 0,000 |
-| 1.048.576, gleiche Quellen | 22 | 44 | 5 | 3 | 0,000 |
-
-Der größere Pool senkt auf Seed 16 die beobachteten Ambient-Fehler und erhöht
-auf Seed 22 die Erkennung. Auf beiden Seeds nehmen jedoch die eigenen und
-Satelliten-Fehler zu. Gegenüber dem laufenden Modell gewinnt keiner dieser
-Läufe den festgelegten Gesamtvergleich. **Die Dienstvorgabe bleibt 65.536.**
-
-Der einmalige Pool-Bau dauerte etwa 490 beziehungsweise 644 Sekunden. Die
-Läufe stoppten nach 13.500 beziehungsweise 5.000 Schritten. Der größere Pool
-passte nicht vollständig in den verfügbaren Dateicache und verursachte mehr
-Input-Wartezeit. Diese Zeiten sind keine isolierte Durchsatzmessung: Während
-Teilen des ersten Laufs wurde parallel das neue native SDK vorbereitet.
-Die Modellqualität wurde weiterhin offline auf identischem Audio gemessen.
-Die temporären 32-GiB-Dateien wurden nach der Messung entfernt; Signaturen,
-Prüfsummen, Berichte und Modelle bleiben privat erhalten.
+[GPU-Benchmarks](gpu-training-and-benchmarks.md),
+[Datenübernahme](data-import.md) und [Bewertung](evaluation.md) erklären die
+entsprechenden Prüfungen. Individuelle Modellversuche und Stimmdaten bleiben
+in privaten Projektberichten.

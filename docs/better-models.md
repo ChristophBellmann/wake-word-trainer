@@ -1,79 +1,48 @@
-# Better models: more data, fewer false activations
+# Bessere Modelle mit passenden Daten
 
-## Your recordings decide
+Ein Modell muss echte Aufrufe erhalten und Sprache ohne Aufruf ignorieren.
+Mehr Daten helfen nur, wenn Labels, Quelle und Prüfrollen passen.
 
-Für Fehlalarme beim Telefonieren führt der [zusammenhängende Ablauf](false-activations-workflow.md)
-von der Collector-Aufnahme über Quellenprüfung und GPU-Training bis zum
-gemeinsamen Modellvergleich und dem freigegebenen Rollout.
+## Eigene Positive und Negative
 
-Synthetic voices are cheap, but a model that is good on them is not
-necessarily good on you. 50 or more own recordings from the satellites, from
-several people and distances, make a real difference. The
-[Wake Word Collector](https://github.com/ChristophBellmann/ha-wake-word-collector)
-records them with the satellites' own microphones.
+Echte positive Aufrufe aus denselben Räumen, Entfernungen und Mikrofonkanälen
+sammeln. Synthetische Stimmen ergänzen diese Vielfalt, ersetzen sie aber nicht.
+Bestätigte TV-, Gesprächs- oder Geräteansagen ohne Aktivierungswort bilden
+besonders passende Negative für den jeweiligen Alltag.
 
-## Your own negatives
+Der Collector liefert tatsächliche Satelliten-Fehlalarme als eigene Quelle
+`satellite_negative` mit Standardgewicht 4. Lokale negative WAV-Ordner gehören
+zu `own_negative`. Die Trennung verhindert, dass ein sehr großer lokaler
+Bestand wenige echte Satellitenfehler verdrängt. Der Bericht zählt beide
+Quellen getrennt; ein Rollout darf die Satelliten-Negativfehler nicht erhöhen.
 
-Vor einer neuen Trainingsrunde lassen sich Positive, Negative und ungeprüfte
-Auslösungen mit [`audit`](data-audit.md) unabhängig transkribieren und mit
-mehreren Wakeword-Modellen bewerten. Widersprüchliche Labels und schwierige
-Negative werden zum Anhören markiert; die Prüfung verändert keine Labels.
+## Teacher und unabhängige STT
 
-Recordings **without** the wake word from your home — TV, conversations,
-words that sound alike — are the strongest lever against false activations:
+Die [Quellenprüfung](data-audit.md) zeigt Widersprüche und bewertet schwierige
+Negative. Ein Teacher kann gezielt auf aktuelle Mikrofonaufnahmen angepasst
+werden. Seine Log-Mel-Features bleiben getrennt vom Microfrontend des Students.
+Eine stärkere STT kann Geräteansagen oder Gespräche erkennen; ein nicht
+gefundenes Aktivierungswort allein beweist noch keinen Fehlalarm.
+Die [HA-Prüfung](home-assistant-review.md) verbindet diese Ergebnisse mit den
+Aufnahmen und deren Bestätigung.
 
-- `recordings.negative_folders`, or clips marked *not the wake word* in the
-  collector;
-- false alarms reported on the satellites (*"false alarm"* in the collector);
-- with the collector's *learn from activations without input*, activations
-  after which nobody said anything.
-
-A held-out share also limits the cutoff (`max_own_negative_share`), and the
-report lists the ones that still trigger.
-
-Clips from the collector (real false activations of your satellites) get
-their own training set `satellite_negative` with its own sampling weight
-(default 4.0), separate from local negative folders (`own_negative`). In
-training every set is drawn with a fixed share, independent of how many clips
-it holds; without the split, a large local folder of negatives would dilute
-the few recordings from your satellites. The report counts them separately:
-
-```text
-… 3 of 317 own non-wake-word recordings trigger (0 of 12 from the satellites)
-```
-
-Automatic deployment refuses a model that triggers on more of these
-satellite recordings than the deployed one.
-
-## Speech in your language
-
-The microWakeWord negative sets are mostly English.
+## Sprache, Räume und schwierige Beispiele
 
 ```bash
-wake-word-trainer -p hey_jarvis download --speech mls_de
+wake-word-trainer -p my_project download --speech mls_de
 ```
 
-fetches German audio books (Multilingual LibriSpeech; also `mls_fr`,
-`mls_nl`, `mls_es`, `mls_it`, `mls_pt`, `mls_pl`). Add the preset to
-`negatives.speech_presets`.
+Multilingual LibriSpeech liefert zusätzliche Sprache; neben Deutsch sind
+`mls_fr`, `mls_nl`, `mls_es`, `mls_it`, `mls_pt` und `mls_pl` verfügbar.
+Die Auswahl unter `negatives.speech_presets` übernehmen. Eigene Raumgeräusche
+und Raumantworten unter `augmentation.background_folders` und `rir_folders`
+verbessern die Augmentierung, sofern sie nicht in den Prüfbestand gelangen.
 
-## Mining rounds
+`training.mining_rounds` sammelt nach einer Runde falsch ausgelöste Fenster
+negativer **Trainingsdaten**. Mining separat vergleichen und dessen Gewichtung
+begrenzen; es kann die Qualität auch verschlechtern. Prüfclips bleiben verboten.
 
-`training.mining_rounds: 2` or `run --rounds 2` lets the model find its own
-weak spots in the negative training data: after each round it collects what
-it wrongly reacts to and trains on, with extra weight.
-
-## Your rooms
-
-`augmentation.background_folders` with recordings of your own living room and
-`augmentation.rir_folders` with impulse responses make the augmentation sound
-like home.
-
-## Good to know
-
-- **One model per wake word.** Two phrases in one model compete; train them
-  separately.
-- **Short words are hard.** Three or four syllables ("Hey Jarvis") work much
-  better than one ("Jarvis").
-- **`training.seed`** makes augmentation, sampling and initialisation
-  repeatable for comparisons.
+Für ein Zweiwort-Modell ist das zweite Wort allein kein vollständiger Aufruf.
+Teacher-Ziele können zusätzliche Prüfaufgaben abdecken, müssen aber ausdrücklich
+von Student-Labels getrennt bleiben. Seeds, Sampling-Anteile und unverändertes
+Prüfaudio machen den Vergleich nachvollziehbar.

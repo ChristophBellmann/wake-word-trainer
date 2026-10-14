@@ -66,8 +66,8 @@ Die Scores unterschiedlicher Modelle sind nicht automatisch kalibriert.
 
 Erst das Bestätigen im Collector macht einen Clip zum Trainingsbeispiel.
 Anschließend das normale GPU-Training starten und am gemeinsamen Prüfbestand
-mit dem eingesetzten Modell vergleichen. Für das Bad werden außerdem echte
-positive Aufrufe vom dortigen Satelliten benötigt: Beispiele anderer Räume
+mit dem eingesetzten Modell vergleichen. Für jedes Gerät werden außerdem echte
+positive Aufrufe vom selben Mikrofon benötigt: Beispiele anderer Räume
 belegen dessen Erkennung nicht.
 
 ## Daten und Ressourcen
@@ -118,7 +118,7 @@ Audiohashes zugeordnet: Nach einem Schnitt passt ein altes Ergebnis nicht mehr.
 Für einen gezielten lokalen Aufruf derselben HA-Schnittstelle:
 
 ```bash
-wake-word-trainer -p hey_momo review --device bath \
+wake-word-trainer -p my_project review --device bath \
   --since '2026-10-14T00:00:00+02:00' --stt-model medium \
   --teacher teacher/model.pt
 ```

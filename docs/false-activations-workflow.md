@@ -1,7 +1,7 @@
 # Fehlaktivierungen beim Telefonieren verringern
 
 Das Ziel ist ein Modell, das Gespräche ignoriert und den vollständigen Aufruf
-„Hey Momo“ weiter erkennt. Dafür braucht es bestätigte Gesprächsbeispiele,
+„Hey Nova“ weiter erkennt. Dafür braucht es bestätigte Gesprächsbeispiele,
 einen getrennten Prüfbestand und einen Vergleich mit dem eingesetzten Modell.
 Mehr Training oder ein höherer Schwellwert allein garantiert das nicht.
 
@@ -28,15 +28,15 @@ Der öffentliche [Wake Word Collector](https://github.com/ChristophBellmann/ha-w
 ist die Quelle der Satellitenaufnahmen. Eine Auslösung während eines Telefonats
 ist zunächst ein Prüfclip. Wenn kein vollständiges Aktivierungswort hörbar ist,
 wird sie nach dem Anhören negativ freigegeben. Enthält das Gespräch tatsächlich
-„Hey Momo“, gehört es nicht als Negativbeispiel ins Training.
+„Hey Nova“, gehört es nicht als Negativbeispiel ins Training.
 
 Gerät, Mikrofonpfad und Aufnahmedatum helfen, Fehler einzugrenzen. Ein veränderter
 Mikrofonkanal oder Filter kann STT verschlechtern. Eine leere Transkription
 bedeutet deshalb nicht, dass der Clip ein bestätigter Fehlalarm ist.
 
-Allein gesprochenes „Momo“ bleibt bei einem Zweiwort-Modell negativ. Einige
-späte Lab-Experimente haben diese Semantik geändert; sie werden nicht allein
-wegen ihres Branchnamens übernommen.
+Ein einzelnes Wort eines Zweiwort-Aufrufs ist für den Student noch kein
+vollständiger Aufruf. Teacher-Ziele und Student-Ziele müssen ausdrücklich
+getrennt dokumentiert werden.
 
 Die [Prüfung direkt in Home Assistant](home-assistant-review.md) ruft diese
 ungeprüften Clips mit dem Collector-Token ab und zeigt STT-/Modell-Ergebnisse
@@ -45,10 +45,10 @@ in der Karte. Die Bestätigung bleibt beim Menschen.
 ## 2. Quellen und Beschriftungen unabhängig prüfen
 
 ```bash
-wake-word-trainer -p hey_momo fetch
-wake-word-trainer -p hey_momo data check
-wake-word-trainer -p hey_momo audit --stt-model small \
-  --model deployed/hey_momo.tflite --teacher teacher/legacy.pt \
+wake-word-trainer -p my_project fetch
+wake-word-trainer -p my_project data check
+wake-word-trainer -p my_project audit --stt-model small \
+  --model deployed/my_project.tflite --teacher teacher/legacy.pt \
   --unlabelled-folder review/unlabelled --output audit/current
 ```
 
@@ -73,13 +73,10 @@ Positive erfüllen unterschiedliche Rollen; ihre Herkunft bleibt erhalten.
 
 Für einen Modellvergleich wird der Bestand eingefroren. Prüfaufnahmen dürfen
 weder ins Training noch ins Mining zurückgelangen. Unterschiedliche Seeds
-erhalten eigene Projektordner. Das kurze Lab-Profil mit vollständiger Bewertung,
-Lernratenabfall und Frühstopp ist ein sinnvoller Gegenversuch. Automatisches
-Mining bleibt dabei aus: Spätere Lab-Kampagnen verschlechterten das Modell.
+erhalten eigene Projektordner. Ein Vergleichsprofil mit vollständiger Bewertung,
+Lernratenabfall und Frühstopp ist ein sinnvoller Gegenversuch. Mining wird separat verglichen und darf den Prüfbestand nicht verwenden.
 
-Die [Übernahmeliste](migration-from-wakeword-lab.md) zeigt, welche bewährten
-Teile wieder verfügbar sind und welche Experimente bewusst nicht aktiviert
-wurden. [GPU-Training und Benchmarks](gpu-training-and-benchmarks.md) erklärt
+Die [Datenübernahme](data-import.md) hält Herkunft und Rollen nachvollziehbar. [GPU-Training und Benchmarks](gpu-training-and-benchmarks.md) erklärt
 die Geräteauswahl, CPU-Phasen, Messmethodik und gemessenen Leistungsgewinne.
 
 ## 4. Erkennung und Fehlalarme gemeinsam vergleichen

@@ -1,40 +1,40 @@
-# Summary
+# Übersicht
 
-* [Overview](README.md)
+* [Überblick](README.md)
 
 ## Setup
 
 * [Installation](installation.md)
-* [Quick start](quick-start.md)
-* [Settings (wakeword.yaml)](configuration.md)
+* [Schnellstart](quick-start.md)
+* [Einstellungen (wakeword.yaml)](configuration.md)
 
 ## Training
 
-* [The pipeline step by step](pipeline.md)
-* [Evaluation and the cutoff](evaluation.md)
-* [Better models: more data, fewer false activations](better-models.md)
+* [Trainingsablauf](pipeline.md)
+* [Bewertung und Schwelle](evaluation.md)
+* [Bessere Modelle mit passenden Daten](better-models.md)
 * [Fehlaktivierungen beim Telefonieren verringern](false-activations-workflow.md)
 * [Positive, Negative und Fehlaktivierungen prüfen](data-audit.md)
-* [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md)
+* [Datenübernahme mit Herkunft](data-import.md)
 * [Negativkorpora und ihr Qualitätsvergleich](negative-corpora.md)
 * [GPU-Training und Benchmarks](gpu-training-and-benchmarks.md)
 * [Softwarestack, Compiler und Optimierung](software-stack-and-compiler.md)
 * [ROCm-/MIOpen-Update und Umzug vorbereiten](rocm-update.md)
-* [Replacing a model you already use](replacing-a-model.md)
+* [Ein bestehendes Modell ersetzen](replacing-a-model.md)
 
 ## Home Assistant
 
-* [Trainer service for Home Assistant](service.md)
+* [Trainer-Dienst für Home Assistant](service.md)
 * [Fehlaktivierungen direkt in Home Assistant prüfen](home-assistant-review.md)
-* [Sharing the GPU and checking resources](resources.md)
-* [Clip extraction from long recordings](extraction.md)
-* [Automatic firmware deployment](deployment.md)
-* [Training during idle nights](automatic-training.md)
+* [GPU teilen und Ressourcen prüfen](resources.md)
+* [Clips aus langen Aufnahmen ausschneiden](extraction.md)
+* [Automatischer Firmware-Rollout](deployment.md)
+* [Training in ruhigen Nachtstunden](automatic-training.md)
 
-## Reference
+## Referenz
 
-* [Command line](cli.md)
-* [HTTP API](api.md)
-* [Data licenses and privacy](licenses-and-privacy.md)
-* [Development](development.md)
+* [Kommandozeile](cli.md)
+* [HTTP-API](api.md)
+* [Datenlizenzen und Datenschutz](licenses-and-privacy.md)
+* [Entwicklung](development.md)
 * [Deutsch](deutsch.md)

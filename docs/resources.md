@@ -1,12 +1,7 @@
-# Sharing the GPU and checking resources
+# GPU teilen und Ressourcen prüfen
 
-Für Gerätewahl, optimierten Trainingskern und Messungen:
-[GPU-Training und reproduzierbare Benchmarks](gpu-training-and-benchmarks.md).
-
-## Pause other GPU services
-
-When an LLM or GPU TTS runs on the training computer as well, list their
-systemd user services in `service.yaml`:
+Der Trainingsrechner kann auch Sprachmodelle oder GPU-Sprachausgabe betreiben.
+Im privaten `service.yaml` deren systemd-User-Dienste eintragen:
 
 ```yaml
 pause_services:
@@ -15,32 +10,45 @@ pause_services:
   - wyoming-orpheus.service
 ```
 
-Before a run the trainer stops the services that were **active**. After the
-run, an error, *Stop training* or a regular shutdown of the trainer service it
-starts exactly these services again; services that were inactive stay
-inactive. An interrupted run is recovered at the next start of the trainer;
-the state lives in the project as `paused_services.json`. The names are
-examples; without this setting no other service is touched. This applies to
-`serve`; direct CLI runs do not manage other services.
+Vor einem GPU-Lauf pausiert der Trainer nur Dienste, die aktiv waren. Nach
+Abschluss, Fehler, Stopp oder regulärem Dienstende startet er genau diese
+wieder. Inaktive Dienste bleiben inaktiv. `paused_services.json` ermöglicht
+die Wiederherstellung nach einem unterbrochenen Lauf. Die Namen sind Beispiele;
+ohne diese Einstellung wird kein anderer Dienst verwaltet. Direkte CLI-Läufe
+verwalten diese Dienste nicht.
 
-## Free resources before and during a run
-
-Paused services free VRAM, but not memory another process holds. A training
-that has to swap hardly progresses. `serve` therefore checks before every
-start (from Home Assistant, through the API and for the nightly training) and
-refuses with HTTP 503 and the reason:
-
-```yaml
-resource_check:                 # all values optional
-  min_available_memory_gb: 6    # MemAvailable before and during the run
-  max_load_per_cpu: 0.75        # load per CPU before the start
-  min_free_vram_gb: 8           # after pausing services; not checked without it
-  wait_seconds: 10              # time until freed VRAM becomes visible
+```mermaid
+stateDiagram-v2
+  [*] --> RessourcenPrüfen
+  RessourcenPrüfen --> Abgelehnt: RAM oder CPU nicht frei
+  RessourcenPrüfen --> AktiveDienstePausieren: ausreichend frei
+  AktiveDienstePausieren --> VRAMPrüfen
+  VRAMPrüfen --> GPUArbeit: ausreichend VRAM
+  VRAMPrüfen --> Wiederherstellen: zu wenig VRAM
+  GPUArbeit --> Wiederherstellen: fertig, Fehler oder Stopp
+  Wiederherstellen --> [*]
+  Abgelehnt --> [*]
 ```
 
-- Refused starts do not change the state of the last run.
-- If the VRAM check fails after pausing, the services are started again.
-- During a run memory is checked every 30 seconds. `/v1/status` shows the
-  values and a warning under `resources`, also written to `service.log`. The
-  warning does not stop the run.
-- `enabled: false` switches the check off.
+## Grenzwerte
+
+```yaml
+resource_check:
+  min_available_memory_gb: 6
+  max_load_per_cpu: 0.75
+  min_free_vram_gb: 8
+  wait_seconds: 10
+```
+
+RAM und CPU werden vor dem Start geprüft, GPU-RAM nach dem Pausieren. Ein
+abgelehnter Start lässt den letzten Lauf unverändert und liefert HTTP 503 mit
+Grund. Reicht der GPU-RAM anschließend nicht, werden pausierte Dienste sofort
+wiederhergestellt. Während eines Laufs prüft der Dienst alle 30 Sekunden den
+RAM und zeigt eine Warnung unter `resources`; diese Warnung beendet den Lauf
+nicht. `enabled: false` deaktiviert die Ressourcenprüfung.
+
+Die gemeinsame Dateisperre verhindert gleichzeitige Student-, Teacher- und
+Benchmark-Arbeit. Eine verwaiste Sperrdatei allein blockiert nicht; entscheidend
+ist die aktive Betriebssystem-Sperre. CPU-Prüfprofile pausieren keine GPU-Dienste.
+[GPU-Benchmarks](gpu-training-and-benchmarks.md) unterscheiden Zuführung,
+Rechendurchsatz und Modellqualität.

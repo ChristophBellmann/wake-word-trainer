@@ -1,22 +1,23 @@
-# Data licenses and privacy
+# Datenlizenzen und Datenschutz
 
-## Data licenses
+Der Programmcode ist unter Apache-2.0 veröffentlicht. Für heruntergeladene
+Datensätze, Stimmen und Modelle gelten deren jeweilige Lizenzen. Die
+[Hugging-Face-Quellenbeschreibung](https://huggingface.co/datasets/kahrendt/microwakeword/blob/main/README.md)
+und die Metadaten der Piper-Stimmen vor einer Weitergabe prüfen.
 
-The trainer itself is Apache-2.0. The downloaded datasets (AudioSet, Free
-Music Archive, MIT impulse responses, microWakeWord's negative sets,
-Multilingual LibriSpeech) have different licenses and usage restrictions. As
-microWakeWord states for the same data: models trained with them are for
-personal, non-commercial use.
+Eigene Sprachaufnahmen, Transkripte, individuelle Aktivierungswörter,
+Teacher-Gewichte, Modelle und Zugangstokens gehören in private Projektordner.
+Sie werden nicht in das öffentliche Repository übernommen. `projects/` und
+`downloads/` sind dort ignoriert. Auch abgeleitete Prüfberichte können sensible
+Sprachdaten enthalten.
 
-Piper voices have their own licenses; check the model card of every voice you
-download.
+Der Collector bleibt die lokale Quelle. Die Workstation holt Audio mit dessen
+Token und betreibt STT lokal; Modelle können einmalig heruntergeladen werden.
+Neue Analyse-Transkripte erscheinen an der angemeldeten Karte und werden nicht
+als Sensorattribute an den Recorder gegeben. Prüfsnapshots sind privat
+zugänglich, behalten Herkunft und Hashes und werden vom Besitzer nach Bedarf
+gelöscht. Eine Prüfung ändert ohne ausdrückliche Bestätigung keine Labels.
 
-## Privacy
-
-- Your recordings stay in the project folder on your computer.
-- The collector export is protected by a token; the trainer fetches, Home
-  Assistant never pushes recordings anywhere else.
-- Clip extraction processes audio in memory on the training computer and
-  does not store it; nothing is sent to a cloud.
-- Do not publish projects or models trained on other people's voices without
-  their consent.
+Vor einer Veröffentlichung eines Modells neben der Lizenz auch die enthaltenen
+Datenquellen und personenbezogene Metadaten prüfen. Ein kleines Modell ist
+keine Berechtigung, die zugehörigen Aufnahmequellen öffentlich zu machen.

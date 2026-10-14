@@ -1,40 +1,42 @@
-# HTTP API
+# HTTP-API
 
-The service started with `serve` listens on port 10701 by default. Every
-`/v1` request needs `Authorization: Bearer <token>`.
+Der Trainer-Dienst hört standardmäßig auf Port 10701. Alle `/v1`-Aufrufe
+benötigen `Authorization: Bearer <token>`; der Token bleibt in einer privaten
+Datei. HTTP-Antworten sind als privat und nicht zu speichern gekennzeichnet.
 
-| Request | |
+| Aufruf | Ergebnis |
 | --- | --- |
-| `GET /health` | `{"ok": true}`, no token |
-| `GET /v1/status` | state of the current or last run, best result, GPU, resources, profiles, speaker routes, extraction, deployment, automatic training |
-| `POST /v1/start` `{"profile": "<id>"}` | start a run with a configured profile (default `recommended`); 503 when the resource check refuses |
-| `POST /v1/stop` | stop the run; finished rounds are kept |
-| `GET /v1/review` | privater Detailbericht der letzten [Collector-Prüfung](home-assistant-review.md), einschließlich Transkripten |
-| `GET /v1/report` | evaluation of the exported model (`report.json`) |
-| `GET /v1/model/<slug>.json` / `.tflite` | the exported model for ESPHome |
-| `POST /v1/speaker_test` `{"route": "<name>"}` | play one held-out recording through a configured loudspeaker route |
-| `POST /v1/extract` | WAV body, header `X-Wakeword-Phrases` (JSON list): returns wake-word clips, see [extraction](extraction.md) |
+| `GET /health` | `{"ok": true}`, ohne Token |
+| `GET /v1/status` | aktueller oder letzter Zustand, Fortschritt, Ressourcen, Profile und Zusammenfassungen |
+| `POST /v1/start` `{"profile": "<id>"}` | vorkonfiguriertes Profil starten; 409 bei aktivem Lauf, 503 bei Ressourcenmangel |
+| `POST /v1/stop` | laufendes Profil stoppen, abgeschlossene Runden behalten |
+| `GET /v1/report` | Bewertung des Exportmodells |
+| `GET /v1/review` | privater Detailbericht der letzten Aufnahmeprüfung einschließlich Transkripten |
+| `GET /v1/model/<slug>.json` / `.tflite` | Exportmodell und ESPHome-Manifest |
+| `POST /v1/speaker_test` `{"route": "<name>"}` | Prüfaufnahme über eine konfigurierte Lautsprecherroute wiedergeben |
+| `POST /v1/extract` | WAV und `X-Wakeword-Phrases` als JSON-Liste; erkannte Ausschnitte zurückgeben |
 
-Callers can only pick configured profiles and routes; no commands, paths or
-settings can be sent.
+## Statusfelder
 
-## Status fields
-
-| Field | |
+| Feld | Bedeutung |
 | --- | --- |
-| `state` | `starting`, `running`, `completed`, `stopped` or `failed` |
-| `last_error` | reason of the last failure |
-| `wake_word`, `slug` | project |
-| `gpu` | detected GPU |
-| `resources` | memory, load, VRAM and a warning while a run swaps |
-| `profiles` | id → label |
+| `state` | `starting`, `running`, `completed`, `stopped`, `failed` |
+| `phase`, `step`, `round` | laufender Arbeitsschritt und Trainingsfortschritt |
+| `last_error` | Fehlergrund |
+| `wake_word`, `slug` | Projektkennung |
+| `gpu`, `resources` | Gerät, RAM, Last und Warnungen |
+| `profiles` | Profilkennung → sichtbarer Name |
 | `review_profiles`, `review` | Prüfprofile und Zusammenfassung ohne Transkripte |
-| `speaker_routes` | configured loudspeaker routes |
-| `extraction` | `enabled`, `available` |
-| `deployment` | state of the firmware rollout |
-| `automatic_training` | why the idle-night scheduler is waiting |
+| `speaker_routes` | konfigurierte Lautsprecherrouten |
+| `extraction` | Freigabe und Verfügbarkeit der Spracherkennung |
+| `deployment` | Stand des Firmware-Rollouts |
+| `automatic_training` | Stand und Wartegrund der Nachtplanung |
 
 ```bash
 curl -s -H "Authorization: Bearer $(cat ~/.config/wake-word-trainer/service.token)" \
   http://localhost:10701/v1/status | python3 -m json.tool
 ```
+
+[Prüfschnittstelle zum Collector](home-assistant-review.md),
+[Extraktion](extraction.md) und [Dienstkonfiguration](service.md) erklären
+Authentifizierung, Datenrollen und erlaubte Parameter.

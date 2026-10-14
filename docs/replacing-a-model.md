@@ -1,20 +1,20 @@
-# Replacing a model you already use
+# Ein bestehendes Modell ersetzen
 
-Measure before you switch:
+Vor dem Wechsel identische Aufnahmen vergleichen:
 
 ```bash
-wake-word-trainer -p hey_jarvis compare --current --model /path/to/old_model.tflite
+wake-word-trainer -p my_project compare --current --model /path/to/reference.tflite
 ```
 
-With the old manifest (`old_model.json`) beside the `.tflite`, both models
-are measured on your held-out recordings:
+Das zugehörige Manifest muss neben jeder TFLite-Datei liegen. Der Bericht
+vergleicht beide Modelle an ihren Manifest-Schwellen und an den Schwellen,
+die das gleiche Fehlerbudget erlaubt. `--model` ist wiederholbar.
 
-- each at its **own** cutoff from its manifest,
-- and each at the cutoff **your budget** allows.
+Die gleiche Zahl erkannter Prüfpositive reicht nicht: Auch prüfen, ob dieselben
+echten Aufrufe erhalten bleiben und ob eigene sowie Satelliten-Negative öfter
+auslösen. Ambient-Audio und Modellhashes bleiben für beide identisch.
 
-Switch only when the new one recognises at least as much with no more false
-activations. `--model` can be given several times, for example to compare the
-official `hey_jarvis` model with your own.
-
-[Automatic deployment](deployment.md) applies the same comparison before it
-touches a satellite.
+Der [Rollout](deployment.md) verlangt keine Regression, eine belegte
+Verbesserung, passende Fehlerbudgets und bestandene Parity. Ein Kandidat mit
+weniger neuen Fehlalarmen und gleichzeitig verlorenen echten Aufrufen wird
+nicht allein wegen der besseren Negativzahl freigegeben.

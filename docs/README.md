@@ -1,71 +1,47 @@
 # Wake Word Trainer
 
-Bei Fehlalarmen während Gesprächen beginnt die Anleitung mit
-[Fehlaktivierungen beim Telefonieren verringern](false-activations-workflow.md):
-Collector-Sammlung, geprüfte Labels, unabhängige STT/Teacher-Prüfung, GPU-Läufe
-und Modellvergleich vor dem Rollout.
+Aus eigenen bestätigten Mikrofonaufnahmen, synthetischer Sprache und
+öffentlichen Negativkorpora entsteht ein kleines microWakeWord-Modell für
+ESPHome. Der Student trainiert mit TensorFlow auf AMD/ROCm oder NVIDIA/CUDA.
+Ein optionaler PyTorch-Teacher und unabhängige STT helfen bei der Quellenprüfung.
 
-Train a wake word model for ESPHome voice satellites (`micro_wake_word`) from
-**your own recordings** plus synthetic speech, and get an honest measurement
-of how well it works on your voice before you flash it.
-
-It is the second half of the
-[Wake Word Collector](https://github.com/ChristophBellmann/ha-wake-word-collector):
-
-```text
-satellite ──► Wake Word Collector (Home Assistant) ──► Wake Word Trainer ──► satellite
-  say it        record, sort, review, export             fetch, train,         micro_wake_word
-                                                         evaluate, export
+```mermaid
+flowchart LR
+  S[Satelliten] --> C[Home Assistant: Collector]
+  C --> R[Ungeprüfte Auslösungen bewerten]
+  R --> L[Bestätigte Positive und Negative]
+  L --> T[Workstation: Student auf GPU]
+  K[Korpora und Piper-TTS] --> T
+  T --> E[int8-Modell und Regression]
+  E -->|Freigabe| C
+  C -->|ESPHome-Rollout| S
 ```
 
-It also works without the collector, from folders of WAV files or synthetic
-speech alone. Training uses [microWakeWord](https://github.com/kahrendt/microWakeWord)
-and [Piper](https://github.com/OHF-Voice/piper1-gpl) voices through Piper's
-ONNX API.
+## Einstieg
 
-## The way through
+[Installation](installation.md) → [Schnellstart](quick-start.md) →
+[Konfiguration](configuration.md) → [Trainingsablauf](pipeline.md).
+Die [Home-Assistant-Prüfung](home-assistant-review.md) zeigt STT und optionale
+Teacher-/Student-Antworten direkt an den Aufnahmen. Labels und Freigaben bleiben
+nachvollziehbar; leere STT ist kein Beweis für einen Fehlalarm.
 
-Vor dem Nachtraining: [Positive, Negative und Fehlaktivierungen prüfen](data-audit.md).
-Altbestände: [Unterschiede und Übernahme aus dem Wakeword Lab](migration-from-wakeword-lab.md).
-[Negativkorpora und Qualitätsvergleich](negative-corpora.md) zeigen, welche
-MMAPs tatsächlich trainiert werden und welche Frontends kompatibel sind.
-Leistung: [GPU-Training und reproduzierbare Benchmarks](gpu-training-and-benchmarks.md).
-Technik: [Softwarestack, Compiler und Optimierung](software-stack-and-compiler.md).
-GPU-Umgebung: [ROCm-/MIOpen-Update und Umzug vorbereiten](rocm-update.md).
+## Qualität und Leistung
 
-1. [Install](installation.md) the trainer on a computer with a GPU.
-2. Follow the [quick start](quick-start.md): create a project, download
-   voices and data, `run`.
-3. Read the [evaluation](evaluation.md): how many of your own held-out
-   recordings it recognises, how many false activations per hour.
-4. Put the exported model on your satellites — by hand, or let Home Assistant
-   do it through the [trainer service](service.md) and
-   [automatic deployment](deployment.md).
-5. Record more, fetch again, train again. With
-   [idle-night training](automatic-training.md) this happens by itself.
+[Fehlaktivierungen bei Gesprächen](false-activations-workflow.md),
+[Quellen und Teacher prüfen](data-audit.md),
+[Negativkorpora](negative-corpora.md) und [Bewertung](evaluation.md) erklären
+die getrennten Datenrollen und Qualitätsnachweise.
+[GPU-Training und Benchmarks](gpu-training-and-benchmarks.md),
+[Softwarestack und Compiler](software-stack-and-compiler.md) sowie
+[Runtime-Updates](rocm-update.md) behandeln effiziente und reproduzierbare Ausführung.
 
-## What makes it different
+## Betrieb
 
-- **Your recordings decide.** Evaluation uses only your own held-out
-  recordings, split by content hash, so the test set never leaks into
-  training.
-- **An honest cutoff.** The model runs exactly like on the satellite, over
-  all 256 cutoffs; the most sensitive one within your false-activation budget
-  is chosen.
-- **Hard negatives from your home.** Clips marked *not the wake word* in the
-  collector and mined false activations become training data.
-- **No regression on the devices.** Automatic deployment only replaces a
-  model that is at least as good on the same data.
-- **Runs beside other GPU work.** Pauses your LLM or TTS services while
-  training and refuses to start without free memory.
+[Trainer-Dienst](service.md), [Ressourcen](resources.md),
+[Nachttraining](automatic-training.md), [Clip-Extraktion](extraction.md) und
+[Rollout](deployment.md) bilden den HA-Ablauf ab. [Kommandozeile](cli.md)
+und [HTTP-API](api.md) enthalten die Referenz.
 
-## Project
-
-- Source and issues: [github.com/ChristophBellmann/wake-word-trainer](https://github.com/ChristophBellmann/wake-word-trainer)
-- Releases: [GitHub releases](https://github.com/ChristophBellmann/wake-word-trainer/releases)
-- License: Apache-2.0 (downloaded datasets have their own, see
-  [licenses](licenses-and-privacy.md))
-
-Deutsch: [Überblick auf Deutsch](deutsch.md).
-
-Für ungeprüfte Satellitenauslösungen: [Prüfung direkt in Home Assistant](home-assistant-review.md).
+Private Aktivierungswörter, individuelle Modelle, Sprachaufnahmen und
+Installationshistorien gehören in die jeweiligen privaten Projekte.
+Die öffentliche Anleitung verwendet neutrale Beispiele.

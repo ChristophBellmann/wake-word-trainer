@@ -1,7 +1,8 @@
-# Automatic firmware deployment
+# Automatischer Firmware-Rollout
 
-Training completion alone does not update a satellite. To opt into automatic
-OTA, add this to the private project's `wakeword.yaml`:
+Ein Trainingsabschluss allein aktualisiert keinen Satelliten. Der übliche
+HA-Weg ist der Rollout der öffentlichen Collector-Integration über ESPHome.
+Alternativ kann der Trainer einen lokal konfigurierten Befehl ausführen:
 
 ```yaml
 deployment:
@@ -11,28 +12,33 @@ deployment:
             --expected-sha256, "{sha256}", --wait, "120", --build]
 ```
 
-First copy the model currently running on the devices **and its adjacent
-manifest** to `deployed/model.tflite` and `deployed/model.json`. Device paths,
-network access, credentials and flash commands stay local; the HTTP client
-cannot set them. The command may run over SSH on the ESPHome host. It must
-verify every requested device and return nonzero on any failed deployment.
-Use the Collector's public `model_update.py` with `require_parity: true` and
-`{hash}` in its model filename.
+Das eingesetzte TFLite-Modell **und dessen Manifest** als Referenz hinterlegen.
+Pfade, Zugangsdaten und Flash-Befehle bleiben privat; HTTP-Aufrufer können sie
+nicht setzen. Der Modell-Updater muss jedes gewünschte Gerät prüfen und bei
+jedem Fehler einen Fehlerstatus zurückgeben. Parity-Prüfung und ein Modellname
+mit Hash binden die Freigabe an genau diese Datei.
 
-The pipeline evaluates the new export and deployed reference on the same
-held-out own recordings and background audio. It compares both at their
-manifest thresholds. Automatic deployment requires no regression in recall or
-own negative triggers (also none among the satellites' own false activations),
-an improvement in at least one of them, and compliance
-with the configured false activation budgets. Synthetic-only evaluation cannot
-approve automatic OTA. The report includes a comparison bound to both model
-SHA256 values before Home Assistant receives completion.
+```mermaid
+flowchart TD
+  A[Neues int8-Modell] --> B[Gleiches Prüfaudio wie Referenz]
+  B --> C{Budgets, keine Regression und Verbesserung?}
+  C -->|Nein| X[Rollout gesperrt]
+  C -->|Ja| P[Parity-Bericht an beide Modellhashes binden]
+  P --> R[GPU-Dienste wiederherstellen]
+  R --> D[ESPHome-Geräte nacheinander prüfen]
+  D --> F{Alle Geräte erfolgreich?}
+  F -->|Ja| N[Referenz aktualisieren]
+  F -->|Nein| E[Gerätestatus behalten und gezielt wiederholen]
+```
 
-After training, the service restores the paused GPU services, then runs the
-configured deployment command. `/v1/status` includes a separate `deployment`
-state; failed firmware updates keep the completed training and exported model.
-The deployed reference advances only when **all** devices have succeeded.
-Retry with `wake-word-trainer -p <project> deploy`; to compare an already
-completed export first, use `deploy --compare`. Local details are in
-`deployment.json`, `parity.json` and `deployment.log`. The Collector tool keeps
-per-device progress and skips successful devices on retries.
+Erkennungsrate, eigene Negative, Satelliten-Negative und Ambient-Budgets müssen
+passen; mindestens eine echte Verbesserung ist erforderlich. Synthetische
+Prüfung allein erlaubt keinen automatischen Rollout. Prüfprofile und Benchmarks
+bieten kein Modell an und starten keinen Rollout.
+
+Nach Training werden pausierte GPU-Dienste wiederhergestellt. Erst dann folgt
+der Befehl. `deployment.json`, `parity.json`, `deployment.log` und der Status
+halten den Stand getrennt vom Training fest. Die Referenz wird erst nach Erfolg
+aller Geräte weitergesetzt. `deploy` wiederholt, `deploy --compare` bewertet
+einen vorhandenen Export vorher neu. Der Collector-Updater überspringt beim
+Wiederholen bereits erfolgreiche Geräte.

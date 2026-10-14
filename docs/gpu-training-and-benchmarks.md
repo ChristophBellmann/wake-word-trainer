@@ -19,27 +19,26 @@ arbeiten weiter auf CPU. Der int8-TFLite-Vergleich arbeitet ebenfalls auf CPU,
 weil er den Satellitenpfad prüft. Eine ruhende GPU in diesen Phasen bedeutet
 deshalb nicht, dass das anschließende Training auf CPU läuft.
 
-## Was aus der Lab-Historie übernommen wurde
+## Die GPU gleichmäßig versorgen
 
-Die vollständigen Historien von `hey_momo` (790 Commits), `main` (625) und
-`momo` (411) wurden am 13.10.2026 erfasst und verglichen, einschließlich der
-damaligen microWakeWord-Untermodul-Historie. Für die Leistungsentscheidungen
-wurden Messungen und spätere Korrekturen gemeinsam berücksichtigt:
+Die Eingangsleitung und der Trainingskern werden getrennt verglichen.
+TFRecords bleiben auf Datenträger; Shuffle, Prefetch und der Cache des
+Prüfbestands haben feste Grenzen. Augmentierung wird je Batch neu gezogen,
+und die vollständige Validierung bleibt erhalten. Größere Batches werden
+sowohl nach Schritten/s als auch Beispielen/s und danach nach Qualität bewertet.
 
-| Historischer Befund | Konsequenz im öffentlichen Trainer |
-| --- | --- |
-| Lab `091a575`: TFRecord-Pool 65.536 statt 32.768 brachte im damaligen Vergleich rund 5,7 % Vorteil. | Einstellbarer, gestempelter TFRecord-Pool, Standardlimit 65.536; Kurzläufe benötigen kleinere Pools. |
-| Lab `a8d32e2` aktivierte zunächst einen automatisch gewählten RAM-Cache. `6df6f04` und `9b459bb` nahmen ihn nach SIGSEGV/SIGBUS zurück. | Keine automatische RAM-Kopie aller Trainings-MMAPs. TFRecords bleiben auf Datenträger, Prefetch und Shuffle sind begrenzt. |
-| Backend `2faa1db`, `0160b41`: TFRecord-Zuführung und gebündelter Cache-Bau. | `python`, `prefetch` und `tfrecord` als getrennt messbare Zuführungen. Gewichtung, Labels, Float32-Werte und Trunkierungsregeln erhalten. |
-| Backend `dd5d01f`, `416923c`, Lab `76bbecf`: Graph-Ausführung und wiederverwendete vollständige Validierung. | Kompilierter Trainingsschritt, vollständige Bewertung in Batches und begrenzter Cache statischer Holdouts. |
-| Mehrere ROCm-Shards verursachten Abstürze; spätere Fixes serialisierten HIP-Arbeit und verwendeten `spawn`. | Eine gemeinsame GPU-Belegung für Student, Teacher und Benchmarks; frischer Prozess pro Benchmark-Variante, keine geladenen Frameworks forken. |
-| Lab `33a491a`: Log-Mel-Teacher bekam zeitweise Microfrontend-Features. | Getrennte Frontends bleiben verbindlich; ein schneller falscher Feature-Pfad wird nicht übernommen. |
-| Größere Batches waren im alten Vergleich pro Schritt langsamer. | Sowohl Schritte/s als auch Beispiele/s vergleichen; größere Batches danach separat auf Modellqualität prüfen. |
-| Der `hey_momo`-Branch enthält später auch Experimente mit allein gesprochenem „Momo“ als positivem Ziel (`8eadfcc`, `0221cdd`). | Diese Produktentscheidung gehört nicht zur GPU-Optimierung. Datenrollen werden nicht aus einem Branchnamen abgeleitet. |
-
-`main` enthält die generische Infrastruktur; wakeword-spezifische Daten und
-Versuche bleiben Projektkonfigurationen. Die historischen Skripte werden
-nicht mit ihren Rechnerpfaden und aktiven Modellordnern weiterbetrieben.
+```mermaid
+flowchart LR
+  A[WAV und Korpora] --> B[CPU: Augmentierung und Microfrontend]
+  B --> C[Begrenzter TFRecord-Pool]
+  C --> D[Prefetch]
+  D --> E[GPU: Student und Optimierer]
+  E --> F[Checkpoints]
+  F --> G[CPU: int8 und Satellitenvergleich]
+  G --> H{Qualität und Parity bestanden?}
+  H -->|Ja| I[Modell freigeben]
+  H -->|Nein| J[Privaten Bericht behalten]
+```
 
 ## Optimiertes Training konfigurieren
 
@@ -66,7 +65,7 @@ bisherige Weg als Referenz verfügbar.
 
 Der neue Kern erhält den bisherigen gewichteten Keras-Loss, Adam und die
 Checkpoint-Auswahl. Er aktiviert weder Soft-Label-Distillation noch die
-abweichende Loss-Normalisierung des alten Lab-Backends. Zeit- und Frequenzmasken
+abweichende Loss-Normalisierung anderer Trainingskerne. Zeit- und Frequenzmasken
 werden für jeden Batch neu auf GPU erzeugt, nach dem statischen Input-Cache.
 Die Validierung verarbeitet sämtliche bisherigen Clips und Ambient-Fenster.
 Cache-Grenze und RAM-Reserve verhindern ein unbeschränktes Vorladen.
@@ -173,9 +172,8 @@ Exportmodell als vermeintlich neu trainiert. Bereits gespeicherte Modelle
 bleiben unverändert abrufbar.
 
 Die GPU-Dateisperre unter `$XDG_CACHE_HOME/wake-word-trainer/gpu.lock` bzw.
-`~/.cache/wake-word-trainer/gpu.lock` gilt projektübergreifend. Die Workstation-
-Standby-Steuerung in `llama-chat` berücksichtigt sie auch in CPU-/I/O-Pausen
-und blockiert paralleles Modellladen sowie LLM-Benchmarks. Eine alte Datei
+`~/.cache/wake-word-trainer/gpu.lock` gilt projektübergreifend. Andere GPU-Dienste können dieselbe Belegung
+auch in CPU-/I/O-Pausen berücksichtigen. Eine alte Datei
 nach einem Absturz blockiert nicht; entscheidend ist die aktive Dateisperre.
 
 Für vorhandene ROCm-Installationen ergänzt die CLI vor Framework-Start die
@@ -211,41 +209,3 @@ Feature-Bau und CPU-Bewertung. Der Trainingsprozess erbt dieselbe Belegung.
 Damit kann weder die Nachtplanung noch ein LLM zwischen zwei Trainingsphasen
 die GPU übernehmen oder die Workstation in Standby schicken. Ein reiner
 `run --prepare-only` reserviert keine GPU.
-
-## Längerer Vergleich mit übernommenen Korpora
-
-Neun getrennte Student-Läufe auf demselben eingefrorenen Prüfbestand wurden
-am 14.10.2026 abgeschlossen. Der große Bestand verändert das Verhältnis
-zwischen Input und GPU-Rechenarbeit deutlich:
-
-| Zuführung | Batch | Schritte bis Frühstopp | Trainingsloop | Input-Wartezeit | Rechenzeit |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| TFRecord | 256 | 7.500 | 165,3 s | 2,1 s | 119,3 s |
-| Prefetch | 256 | 5.000 | 425,4 s | 304,3 s | 85,4 s |
-| Prefetch | 512 | 5.250 | 712,6 s | 486,9 s | 171,6 s |
-
-Die Loop-Zeiten enthalten Validierung; TFRecord-Bau, Feature-Vorbereitung,
-Export und int8-Nachprüfung sind separat. Unterschiedliche Schrittzahlen sind
-kein Vergleich gleicher Trainingsqualität. Prefetch wartet hier überwiegend
-auf Daten; ein begrenzter statischer TFRecord-Pool versorgt die GPU erheblich
-gleichmäßiger. Seine endliche Auswahl kann auch die Modellqualität verändern.
-
-Bei der WAV-Bewertung mit Cutoff 230/255 hielt ein Student mit dem größeren
-offiziellen Profil 46/47 erkannte eigene Prüfaufnahmen und verringerte die
-ausgelösten Satelliten-Negative von 5/14 auf 3/14. Ein zweiter Seed erkannte
-nur 41/47. Die zunächst positive Parity-Entscheidung des ersten Seeds ist wegen
-der später entdeckten [Ambient-Skalierung](evaluation.md#korrektur-der-mmap-skalierung-am-14102026)
-nicht als Freigabe verwendbar; FAPH und Cutoff müssen erneut bestimmt werden.
-Der [Negativkorpus-Vergleich](negative-corpora.md) verwendet die korrigierte
-Bewertung. Deshalb ist die Architektur allein keine Zusage eines besseren
-Ergebnisses. Zusätzlich wurden feste Thorsten-high-Sätze
-offline verglichen. Die unabhängige STT las nur 14/23 Texte exakt normalisiert
-zurück und verwechselte auch den seltenen Namen. Dieser synthetische Durchgang
-bleibt daher ein begrenzter Funktionstest; er liefert keinen zusätzlichen
-belastbaren Nachweis für die reale Telefonstrecke.
-
-Die kleinen Satelliten-Holdouts dienen auch Auswahl und Kalibrierung. Zwei
-Fehler weniger auf 14 Negativen belegen noch keinen stabilen Alltagsgewinn.
-Der Kandidat benötigt eine erneute vollständige Prüfung; in diesem Vergleich
-wurde keine Firmware verändert. Rohdaten, Einzelberichte und Modellgewichte
-bleiben privat.

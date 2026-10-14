@@ -1,37 +1,47 @@
-# The pipeline step by step
+# Trainingsablauf
 
-`run` does it all: `fetch`, `generate`, `features`, then training rounds
-(round 1 from scratch, each further round mines first and continues), each
-round evaluated on the same held-out data, and exports the best round. Every
-step can also be run alone.
+```mermaid
+flowchart TD
+  A[Freigegebene Collector-Aufnahmen] --> C[Trainings- und Prüfrollen]
+  B[Öffentliche Korpora und synthetische Sprache] --> C
+  C --> D[CPU: Audio lesen und augmentieren]
+  D --> E[Microfrontend-Features]
+  E --> F[GPU: Student-Training]
+  F --> G[Checkpoints und vollständige Validierung]
+  G --> H[CPU: int8-Export und Satelliteninferenz]
+  H --> I[Vergleich mit eingesetztem Modell]
+  I --> J{Parity und Regression bestanden?}
+  J -->|Ja| K[Modell bereitstellen]
+  J -->|Nein| L[Privaten Fehlerbericht behalten]
+```
 
-| Step | |
-| --- | --- |
-| `fetch` | Downloads the clips you accepted in the collector (and WAVs from your own folders). Each clip goes to *training* or *evaluation* by a hash of its content, so it keeps its side forever and the evaluation never sees training material. Clips you reject in the collector disappear here on the next fetch. |
-| `generate` | Synthetic speech: the wake word and similar sounding phrases the model must ignore, in several voices and speeds. |
-| `download` | Shared data from Hugging Face: background audio, room impulse responses, and pre-computed negative features (speech, music, noise). Once, then reused. |
-| `features` | Augmented spectrograms: room echo, background noise, gain, EQ. Your own recordings are augmented several times and weigh most. |
-| `train` | microWakeWord MixedNet, streaming, int8 quantized, the architecture of the official ESPHome models. Resumes after an interruption. |
-| `evaluate` | Runs the finished model exactly like the satellite: recall on your held-out recordings, false activations per hour on hours of background audio, for all 256 possible cutoffs. |
-| `export` | `<slug>.tflite` and the manifest `<slug>.json` for ESPHome. |
-| `mine` | Runs the trained model over the negative *training* data and keeps what it wrongly reacts to; the next training learns from it. |
-| `compare` | Several models on exactly the same held-out data. |
+`run` führt die Schritte nacheinander aus. Jeder Schritt lässt sich für
+Diagnosen auch einzeln aufrufen:
 
-## Training and evaluation stay apart
+| Schritt | Befehl | Ergebnis |
+| --- | --- | --- |
+| Daten herunterladen | `download` | Sprache, Hintergrund, Raumantworten, negative Features und gewählte Piper-Stimmen |
+| Eigene Aufnahmen holen | `fetch` | freigegebene WAVs mit stabiler Train-/Prüfaufteilung |
+| Sprache erzeugen | `generate` | positive und ähnliche negative TTS-Clips |
+| Features bauen | `features` | augmentierte Microfrontend-MMAPs |
+| Trainieren | `train` | Student-Checkpoints und Trainingsmetriken |
+| Bewerten | `evaluate` | Erkennung, Fehlaktivierungen, quantisierte Schwellenkurve |
+| Exportieren | `export` | TFLite-Modell und ESPHome-Manifest |
 
-The split by content hash is permanent: a clip that was once in evaluation
-stays there, also after re-recording sessions and new fetches. A WAV that also
-lies under `recordings.hard_folders` stays in evaluation only; `fetch`
-removes earlier duplicate training copies, source files stay untouched.
+Die Trainingsdaten werden über Quellgewichte ausgewählt. Vollständige
+Prüfaufnahmen und Ambient-Stunden bleiben außerhalb des Optimierers.
+Checkpoints werden anhand der Validierung gewählt, eine abschließende Prüfung
+benötigt zusätzliche unabhängige Aufnahmen.
 
-## Options of `run`
+`run --prepare-only` bereitet nur Daten und Features vor. `run --resume` setzt
+einen unterbrochenen Ablauf fort; `--force` erneuert die Vorbereitung.
+Bei Mining-Runden kommen schwierige negative Trainingsfenster hinzu, danach
+folgt erneut die vollständige Bewertung. Mining darf keinen Prüfbestand lesen.
 
-| Option | |
-| --- | --- |
-| `--rounds N` | training rounds after the first (mining in between) |
-| `--steps N` | steps per round (default `training.steps`) |
-| `--resume` | continue from the last checkpoint instead of from scratch |
-| `--force` | regenerate synthetic speech |
-| `--prepare-only` | only fetch, generate and build features (checks the data) |
+Die gemeinsame GPU-Belegung gilt während eines vollständigen Laufs auch für
+CPU-/I/O-Phasen. So können andere GPU-Arbeiten nicht zwischen zwei Phasen die
+Runtime übernehmen. Reine Datenvorbereitung und die unabhängige Clip-Prüfung
+benötigen diese Belegung nicht.
 
-`status` shows the progress of the current or last run.
+[Datenprüfung](data-audit.md), [GPU-Benchmarks](gpu-training-and-benchmarks.md)
+und [Bewertung](evaluation.md) erklären die Nachweise hinter den Schritten.

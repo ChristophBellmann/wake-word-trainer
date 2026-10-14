@@ -1,77 +1,57 @@
-# Evaluation and the cutoff
+# Bewertung und Schwelle
 
-## What is measured
+`evaluate` prüft das exportierte Modell mit streaming-int8-Inferenz und dem
+konfigurierten gleitenden Fenster, entsprechend der Satellitenlogik. Alle 256
+darstellbaren 8-Bit-Schwellen werden verglichen.
 
-`evaluate` runs the exported model **exactly like the satellite** (streaming,
-int8, sliding window of `evaluation.sliding_window_size` frames):
+| Messgröße | Aussage |
+| --- | --- |
+| Erkennungsrate | erkannte eigene Prüfpositive / alle eigenen Prüfpositive |
+| Fehlaktivierungen pro Stunde | Fehler auf vollständig geprüftem Ambient-Audio / Audio-Stunden |
+| Eigene Negativfehler | ausgelöste eigene Prüfclips ohne Aktivierungswort |
+| Satelliten-Negativfehler | Teilmenge tatsächlicher Fehlalarmclips vom Collector |
 
-- **Recall** on your own held-out recordings: which share it recognises.
-- **False activations per hour** on hours of background audio (speech,
-  music, dinner-party noise).
-- **Own negatives**: how many of your held-out recordings without the wake
-  word trigger it. Recordings from the satellites (collector) are also counted
-  on their own: `satellite_negatives`, `satellite_negatives_triggered`.
-
-for all 256 possible cutoffs.
-
-### Korrektur der MMAP-Skalierung am 14.10.2026
-
-Vorgefertigte Hugging-Face-MMAPs enthalten unskalierte `uint16`-Features.
-Die Inferenz multipliziert sie nach der Float-Konvertierung mit `0.0390625`.
-Der Trainer erhält dafür jetzt ihren ursprünglichen Datentyp. Zuvor castete
-`evaluate` Ambient-Features vorzeitig in Float und umging diese Skalierung.
-Bereits skalierte Float-Features waren nicht betroffen; ebenso wenig die
-Bewertung eigener WAV-Aufnahmen und die Skalierung im Trainingsbackend.
-
-Frühere Ambient-FAPH-Berichte, davon abhängige Cutoffs und Parity-Entscheide
-mit diesen Roh-MMAPs müssen neu berechnet werden. Das gilt auch für die
-zunächst dokumentierten Qualitätsvergleiche der Lab-Übernahme. Die Modelle
-müssen dafür nicht neu trainiert werden. `evaluate`, `compare` und die
-Rollout-Prüfung verwenden dieselbe korrigierte Inferenz. Ein Regressionstest
-prüft Roh-MMAPs und bereits skalierte Features mit demselben Inhalt.
-
-Auch die Mittelung der quantisierten Ausgaben verwendet jetzt ganzzahlige
-Summen der ursprünglichen 8-Bit-Werte. Die vorherige Float-Kumulierung konnte
-an exakten Schwellen einen numerisch winzigen Überschuss erzeugen, sogar
-oberhalb von 1,0. Die Entscheidung entspricht damit dem
-[ESPHome-Vergleich der Summe gegen Schwelle × Fenstergröße](https://github.com/esphome/esphome/blob/dev/esphome/components/micro_wake_word/streaming_model.cpp).
-Der Regressionstest prüft lange Ausgabefolgen und exakte Grenzwerte einschließlich
-255/255. Die Korpus-Vergleiche werden mit beiden Korrekturen neu bewertet.
-`audit` und optionales Mining verwenden für quantisierte Student-Modelle
-dieselben exakten Fenstersummen. Float-Modelle behalten ihre Float-Ausgaben.
-
-## Choosing the cutoff
-
-The most sensitive cutoff is chosen that stays within
-
-- `evaluation.max_false_accepts_per_hour` (default 0.5),
-- `evaluation.max_own_negative_share` (default 5 % of your held-out
-  negatives),
-
-and not below `evaluation.min_probability_cutoff` (0.5). The cutoff is
-written into the manifest `<slug>.json` as `probability_cutoff`.
-
-**The cutoff is a trade-off.** A lower false-activation budget gives a
-higher cutoff and fewer accidental activations, but more misses.
-
-## The report
-
-```text
-cutoff 0.906: recognizes 93.8% of 48 own recordings, 0.31 false activations per hour (8.3 h background)
-Not recognized (3): listen to them; mislabelled clips belong rejected in the collector
+```mermaid
+flowchart LR
+  A[Identisches Audio und Prüfbestand] --> B[Eingesetztes Modell]
+  A --> C[Kandidatenmodell]
+  B --> D[Quantisierte Fensterentscheidung]
+  C --> D
+  D --> E[Erkennung und alle Fehlalarmbudgets vergleichen]
+  E --> F{Keine Regression und belegte Verbesserung?}
+  F -->|Ja| G[Parity und Geräteprüfung]
+  F -->|Nein| H[Keine Freigabe]
 ```
 
-`report.json` holds the full curve, the misses and the own negatives that
-still trigger. Through the [service](service.md) Home Assistant shows it.
+## Skalierung und exakte Entscheidung
 
-## Listen to the misses
+Unskalierte `uint16`-Microfrontend-MMAPs müssen ihren Datentyp bis zur Inferenz
+behalten, damit die Skalierung mit `0.0390625` angewendet wird. Schon skalierte
+Float-Features dürfen nicht nochmals skaliert werden. Roh-MMAP und passend
+skalierte Float-Fassung werden durch Regressionstests gegeneinander geprüft.
 
-The report lists the recordings the model does not recognise. Often they are
-mislabelled: something else was said, or it was cut off. Reject them in the
-collector and fetch again.
+Bei int8-Modellen werden die ursprünglichen 8-Bit-Ausgaben ganzzahlig summiert.
+Die Entscheidung vergleicht Summe mit Schwelle × Fenstergröße entsprechend
+[ESPHome](https://github.com/esphome/esphome/blob/dev/esphome/components/micro_wake_word/streaming_model.cpp).
+So entstehen an exakten Grenzen keine numerischen Überschreitungen oberhalb
+von 1,0. Float-Modelle behalten Float-Ausgaben. Audit und Mining benutzen für
+quantisierte Students denselben Entscheidungspfad.
 
-## Synthetic only
+## Schwelle wählen
 
-Without own recordings the evaluation falls back to synthetic speech and the
-report says so. Such numbers say little about your voice, and they never
-approve an [automatic deployment](deployment.md).
+Der Trainer wählt die empfindlichste darstellbare Schwelle innerhalb von
+`evaluation.max_false_accepts_per_hour`, `evaluation.max_own_negative_share`
+und oberhalb von `evaluation.min_probability_cutoff`. Sie wird als
+`probability_cutoff` im ESPHome-Manifest gespeichert. Eine höhere Schwelle
+kann Fehlalarme reduzieren und gleichzeitig echte Aufrufe verlieren.
+
+`report.json` enthält die ganze Kurve, verpasste Positive und ausgelöste
+Negative. Auffällige Aufnahmen anhören, Herkunft und Label prüfen; schlecht
+erkannte echte Aufrufe dürfen nicht nur zur Verbesserung der Zahl entfernt
+werden. Ein zur Checkpoint-Auswahl verwendeter Bestand ist keine unabhängige
+abschließende Prüfung.
+
+Ohne eigene Aufnahmen kann synthetische Sprache eine Funktion prüfen. Sie
+belegt keine Erkennung realer Mikrofonaufnahmen und gibt keinen automatischen
+Rollout frei. Wenige fehlerfreie Audio-Stunden belegen ebenfalls keine
+Nullfehlerrate im Alltag.

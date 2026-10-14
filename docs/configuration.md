@@ -1,32 +1,33 @@
-# Settings (wakeword.yaml)
+# Einstellungen (wakeword.yaml)
 
-Every project folder has a `wakeword.yaml`, created by `init`. It only
-contains what differs from these defaults:
+`init` erstellt im Projekt `wakeword.yaml`. Darin stehen nur Abweichungen
+von den Defaults. Die folgende Übersicht zeigt die wichtigsten Defaults;
+Schlüssel und Profilkennungen bleiben als API-Vertrag unverändert.
 
 ```yaml
 wake_word: Hey Jarvis
-slug: hey_jarvis              # file names; derived from wake_word
-language: en                  # written into the ESPHome manifest
+slug: hey_jarvis              # Dateinamen; aus wake_word abgeleitet
+language: en                  # Sprache im ESPHome-Manifest
 collector:
-  url: ""                     # Home Assistant base URL
-  token_file: ""              # file with the collector token
+  url: ""                     # Basis-URL von Home Assistant
+  token_file: ""              # private Datei mit Collector-Token
 recordings:
-  folders: []                 # more WAV folders with the wake word
-  hard_folders: []            # difficult but correct examples, extra weight, training only
-  negative_folders: []        # own recordings WITHOUT the wake word (real false activations)
-  eval_share: 0.2             # share held out for the evaluation
+  folders: []                 # weitere freigegebene positive WAV-Ordner
+  hard_folders: []            # schwierige echte Aufrufe; nur Training
+  negative_folders: []        # bestätigte Aufnahmen ohne Aktivierungswort
+  eval_share: 0.2             # getrennt gehaltener Prüfanteil
 negatives:
-  speech_folders: []          # more speech the model must ignore (16 kHz WAVs)
-  background_folders: []      # AudioSet/FMA WAVs as negative examples, separate from augmentation
-  speech_presets: []          # downloaded with `download --speech`, e.g. [mls_de]
-  speech_clips: 6000          # at most this many, evenly picked
-  eval_share: 0.05            # each: validation and testing for extra negative WAVs
+  speech_folders: []          # weitere negative Sprache als 16-kHz-WAV
+  background_folders: []      # negative WAVs; getrennt von Augmentierung
+  speech_presets: []          # Download mit download --speech, etwa [mls_de]
+  speech_clips: 6000          # höchstens so viele, gleichmäßig ausgewählt
+  eval_share: 0.05            # je Anteil für Validierung und Prüfung externer WAVs
   feature_sets: [speech, dinner_party, no_speech, dinner_party_eval]
 tts:
-  voices: []                  # Piper .onnx files (with .onnx.json beside them)
-  phrases: []                 # what is synthesized; phonetic spellings help
+  voices: []                  # Piper-ONNX-Dateien mit benachbarter .onnx.json
+  phrases: []                 # synthetisierte positive Aussprachevarianten
   samples: 2000
-  negative_phrases: []        # look-alikes the model must ignore
+  negative_phrases: []        # ähnliche negative Phrasen
   negative_samples: 1000
   length_scales: [0.8, 0.9, 1.0, 1.1, 1.2]
   min_positive_duration_seconds: 0.0
@@ -35,8 +36,8 @@ augmentation:
   background_min_snr_db: 6
   background_max_snr_db: 22
   rir_probability: 0.3
-  augment_negatives: true     # false: keep negative training audio clean; evaluation is always clean
-  background_folders: []      # e.g. recordings of your own living room
+  augment_negatives: true     # false: keine Augmentierung der Trainingsnegative; Prüfung bleibt sauber
+  background_folders: []      # eigene Raumgeräusche
   rir_folders: []
 training:
   device: auto                # gpu verlangt GPU, cpu erzwingt CPU
@@ -50,64 +51,58 @@ training:
   validation_cache_mb: 512
   validation_batch_size: 1024
   progress_interval: 25
-  seed: null                 # optional integer: augmentation, sampling and model initialization
-  model_profile: esphome_v2_like  # also current and current_wider from the old lab
+  seed: null                 # optional: fester Seed für reproduzierbare Vergleiche
+  model_profile: esphome_v2_like  # weitere Profile: current und current_wider
   time_mask_max_size: 0
   time_mask_count: 0
   freq_mask_max_size: 0
   freq_mask_count: 0
-  steps: 20000                # per round
+  steps: 20000                # je Runde
   batch_size: 128
   learning_rate: 0.001
-  early_stopping_patience: 0  # full evaluations without improvement; zero disables
+  early_stopping_patience: 0  # vollständige Bewertungen ohne Verbesserung; null deaktiviert
   early_stopping_min_delta: 0.0
-  lr_patience: 0              # full evaluations before reducing LR; zero disables
+  lr_patience: 0              # Bewertungen vor Lernratenabsenkung; null deaktiviert
   lr_factor: 0.5
   lr_max_reductions: 3
   min_learning_rate: 0.00001
   positive_class_weight: 1.0
   negative_class_weight: 20.0
-  own_repeat: 8               # augmented copies of each own recording
+  own_repeat: 8               # augmentierte Kopien je eigener Aufnahme
   weights: {own: 3.0, own_hard: 1.5, own_negative: 4.0, satellite_negative: 4.0, speech_extra: 5.0, mined: 4.0,
             background_negative: 5.0, tts: 2.0, tts_negative: 3.0, speech: 10.0, dinner_party: 10.0, no_speech: 5.0}
   clip_duration_ms: 1500
   eval_step_interval: 500
-  mining_rounds: 0            # extra rounds: mine false activations, train again
-  mining_samples: 20000       # negative spectrograms checked per round
+  mining_rounds: 0            # zusätzliche Mining- und Trainingsrunden
+  mining_samples: 20000       # negative spectrograms checked je Runde
   mining_threshold: 0.4
 evaluation:
   max_false_accepts_per_hour: 0.5
   min_probability_cutoff: 0.5
-  max_own_negative_share: 0.05  # of your held-out non-wake-word recordings
+  max_own_negative_share: 0.05  # Anteil eigener Prüfnegative
   sliding_window_size: 5
 export:
   author: ""
   website: ""
-  tensor_arena_size: 30000    # raise it if the satellite cannot load the model
+  tensor_arena_size: 30000    # erhöhen, falls das Gerät das Modell nicht laden kann
   minimum_esphome_version: 2024.7.0
 ```
 
-Die [Negativkorpus-Inventur](negative-corpora.md) erklärt aktive Auswahl,
-Sampling-Gewichte und den Vergleich mit Ersatzkorpora. Die drei alten
-`*_background`-Archive besitzen 20-ms-Features und dürfen nicht mit den
-10-ms-Features des aktuellen Trainers gemischt werden.
+## Wichtige Entscheidungen
 
-`--downloads <folder>` on the command line shares the downloads between
-several projects.
+Quellgewichte bestimmen Sampling-Anteile unabhängig von Dateianzahlen.
+`recordings.hard_folders` enthält schwierige echte Aufrufe nur fürs Training.
+Die getrennten eigenen Prüfclips bleiben unverändert. Externe negative WAVs
+haben zusätzliche Validierungs- und Prüfanteile.
 
-## The most important settings
+`training.device: gpu` verlangt tatsächliche GPU-Ausführung. `optimized`
+aktiviert den Graph-Kern mit begrenzter Zuführung und vollständiger Validierung.
+Batchgröße und Poolgröße werden nach [Durchsatz und Qualität](gpu-training-and-benchmarks.md)
+getrennt verglichen. `steps` und Frühstopp begrenzen den Lauf; Mining ist ein
+zusätzliches Experiment mit negativen Trainingsdaten.
 
-| Setting | |
-| --- | --- |
-| `tts.voices`, `tts.phrases` | synthetic positives; several voices and phonetic spellings help |
-| `tts.negative_phrases` | look-alikes the model must ignore ("hey travis" for "hey jarvis") |
-| `recordings.negative_folders` | your own recordings without the wake word: the strongest lever against false activations |
-| `recordings.hard_folders` | difficult but correct examples, extra weight, training only |
-| `recordings.eval_share` | share of your own recordings held out for evaluation |
-| `negatives.speech_presets` | speech in your language, e.g. `[mls_de]` |
-| `training.steps`, `training.mining_rounds` | length and number of training rounds |
-| `evaluation.max_false_accepts_per_hour` | the budget that picks the cutoff |
-| `export.tensor_arena_size` | raise it if the satellite cannot load the model |
-
-The project folder also holds the fetched clips, generated speech, features,
-checkpoints, `report.json` and `export/`.
+[Negativkorpora](negative-corpora.md) erklären passende 10-ms-Features und
+Standardanteile. `--downloads <ordner>` teilt Downloads zwischen Projekten.
+Projektaufnahmen, erzeugte Sprache, Features, Checkpoints und Berichte bleiben
+privat. Die [Dienstkonfiguration](service.md) enthält HA-Profile und lokale
+Ressourcenregeln; [Rollout](deployment.md) enthält die separate Freigabe.

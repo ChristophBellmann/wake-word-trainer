@@ -1,35 +1,25 @@
-# Development
+# Entwicklung
 
 ```bash
-git clone https://github.com/ChristophBellmann/wake-word-trainer
-cd wake-word-trainer
-pip install -e ".[train,dev]"
-pytest -m "not slow"   # seconds
-pytest -m slow         # trains a tiny model on synthetic data, about a minute
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev]'
 ruff check .
+pytest -q -m 'not slow'
 ```
 
-## Layout
+Die schnellen Tests prüfen Datenrollen, SHA-Zuordnung, Split-Isolation,
+Konfiguration, Dienste, Ressourcen und Prüfberichte mit künstlichem Audio.
+Langsame Tests benötigen eine passende TensorFlow-/microWakeWord-Umgebung;
+sie trainieren und vergleichen kleine Modelle. GPU-Geräteerkennung ersetzt
+keinen tatsächlichen GPU-Rechenschritt.
 
-| Module | |
-| --- | --- |
-| `cli.py` | command line |
-| `project.py` | project folder and `wakeword.yaml` |
-| `recordings.py` | fetch from the collector, hash split |
-| `downloads.py` | shared data, Piper voices, speech presets |
-| `piper_generate.py`, `tts.py` | synthetic speech |
-| `features.py`, `audio.py` | augmentation and spectrograms |
-| `training.py`, `training_worker.py` | microWakeWord training |
-| `mining.py` | false-activation mining |
-| `evaluate.py` | streaming evaluation and cutoff |
-| `export.py` | ESPHome model and manifest |
-| `pipeline.py`, `state.py` | `run`, progress state |
-| `service.py` | HTTP service |
-| `system_check.py`, `resources.py` | resource checks, paused services |
-| `extraction.py` | clip extraction with faster-whisper |
-| `deployment.py` | firmware rollout gate |
-| `scheduler.py`, `idle.py` | idle-night training |
+ROCm und NVIDIA/CUDA verwenden denselben Trainingscode mit getrennten
+passenden Framework-Wheels. Backend-Auswahl, Loader-Pfade und Fehler bei
+fehlender GPU werden gezielt geprüft. Einen auf AMD ausgeführten Benchmark
+nicht als NVIDIA-Hardwaretest ausgeben.
 
-Every version gets a tag `vX.Y.Z` and a GitHub release. The documentation
-lives in `docs/` and is published through GitBook; update the affected pages
-with the change.
+Bei fachlichen Änderungen die zugehörigen Seiten unter `docs/` und
+`SUMMARY.md` aktualisieren. `.gitbook.yaml` und `gitbook-docs.yaml` zeigen
+beide auf diesen Ordner. Öffentliche Texte bleiben allgemein, auf Deutsch
+und ohne persönliche Installationshistorien oder Sprachdaten.

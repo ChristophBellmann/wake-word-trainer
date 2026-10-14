@@ -1,74 +1,63 @@
-# Quick start
+# Schnellstart
 
-With the [Wake Word Collector](https://github.com/ChristophBellmann/ha-wake-word-collector)
-in Home Assistant. Without it, put WAV files of the wake word into a folder
-and list it under `recordings.folders` instead of the collector settings.
+Zuerst eine [passende CPU-, ROCm- oder CUDA-Umgebung](installation.md) prüfen.
+Der [Wake Word Collector](https://github.com/ChristophBellmann/ha-wake-word-collector)
+ist die HA-Quelle; alternativ lokale WAV-Ordner unter `recordings.folders`
+eintragen.
 
-## 1. Token
+## Token und Projekt
 
-In Home Assistant, *Wake Word Collector → Configure* shows the export token.
-Save it:
+Den Export-Token aus den Collector-Optionen privat speichern:
 
 ```bash
 mkdir -p ~/.config/wake-word-trainer
-(umask 077; echo "<token>" > ~/.config/wake-word-trainer/hey_jarvis.token)
-```
-
-## 2. Project, voices and data
-
-```bash
-wake-word-trainer -p hey_jarvis init "Hey Jarvis" --language en \
+(umask 077; printf '%s\n' '<collector-token>' > ~/.config/wake-word-trainer/collector.token)
+wake-word-trainer -p my_project init "Hey Nova" --language de \
   --collector-url http://homeassistant.local:8123 \
-  --token-file ~/.config/wake-word-trainer/hey_jarvis.token
-wake-word-trainer -p hey_jarvis download --voice en_US-lessac-medium --voice en_US-amy-medium --data
+  --token-file ~/.config/wake-word-trainer/collector.token
+wake-word-trainer -p my_project download --voice de_DE-thorsten-high --data
 ```
 
-`--data` downloads the shared background audio, impulse responses and
-negative features once (about 15 GB).
+`--data` holt gemeinsame Korpora, Raumantworten und negative Features.
+Speicherbedarf hängt von der Auswahl ab; Downloadordner können projektübergreifend
+geteilt werden.
 
-## 3. Phrases
-
-Edit `hey_jarvis/wakeword.yaml`:
+## Stimmen und Phonetik
 
 ```yaml
 tts:
-  voices: [voices/en_US-lessac-medium.onnx, voices/en_US-amy-medium.onnx]
-  phrases: [hey jarvis, hey jarviss]
-  negative_phrases: [hey jarvo, hey travis, hey service, jarvis, hey]
+  voices: [voices/de_DE-thorsten-high.onnx]
+  phrases: [hey nova, hei nova]
+  negative_phrases: [hey service, nova, hey]
+training:
+  device: gpu
 ```
 
-`phrases` is what is synthesised; phonetic spellings help.
-`negative_phrases` are look-alikes the model must ignore.
+Mehrere Stimmen und Aussprachevarianten helfen, ersetzen aber keine echten
+positiven Aufnahmen derselben Satelliten. Negative Phrasen sind ähnlich klingende
+Sprache, auf die das Modell nicht reagieren soll.
 
-## 4. Train, evaluate, export
+## Vorbereiten, trainieren und vergleichen
 
 ```bash
-wake-word-trainer -p hey_jarvis run
+wake-word-trainer -p my_project fetch
+wake-word-trainer -p my_project data check
+wake-word-trainer -p my_project run
 ```
 
-The end of the output looks like this (numbers made up):
+Der Bericht zeigt Erkennung und Fehlalarme am getrennten Prüfbestand. Für
+ungeprüfte Auslösungen zuerst [STT und Teacher über HA](home-assistant-review.md)
+verwenden; bestätigte Labels werden danach beim nächsten `fetch` übernommen.
 
-```text
-cutoff 0.906: recognizes 93.8% of 48 own recordings, 0.31 false activations per hour (8.3 h background)
-Not recognized (3): listen to them; mislabelled clips belong rejected in the collector
-```
-
-## 5. Use it
-
-Put `export/hey_jarvis.json` and `export/hey_jarvis.tflite` where ESPHome
-finds them (beside the device YAML, or on a web server):
+Das exportierte Manifest und TFLite-Modell liegen unter `export/`. ESPHome
+kann das Manifest lokal oder über eine erreichbare URL beziehen:
 
 ```yaml
 micro_wake_word:
   models:
-    - model: hey_jarvis.json
+    - model: my_word.json
 ```
 
-## Again
-
-Record more in the collector, then `run` again: only new clips are fetched,
-the synthetic speech is kept, training starts over with the new data.
-
-German example: `--language de`, voices `de_DE-thorsten-medium`,
-`de_DE-kerstin-low`, and German speech as negatives with
-`download --speech mls_de` (see [better models](better-models.md)).
+Ein neues Modell erst nach [Bewertung und Regression](evaluation.md)
+[ausrollen](deployment.md). Für weitere deutsche Sprache eignet sich
+`download --speech mls_de` als zusätzliche negative Quelle.
