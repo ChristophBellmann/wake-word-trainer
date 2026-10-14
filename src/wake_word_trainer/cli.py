@@ -164,6 +164,7 @@ def cmd_review(args: argparse.Namespace) -> None:
     from .review import run
     from .state import State, now
 
+    os.environ.update(CUDA_VISIBLE_DEVICES="-1", HIP_VISIBLE_DEVICES="-1", ROCR_VISIBLE_DEVICES="-1")
     project = Project.load(args.project)
     state = State(project)
     state.update(
