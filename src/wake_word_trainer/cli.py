@@ -92,8 +92,13 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
     project = Project.load(args.project)
     output = project.resolve(args.output)
     state = State(project)
-    state.update(state="running", phase="benchmark", started_at=now(), message="GPU-Durchsatz wird gemessen",
-                 best_model_available=False)
+    state.update(
+        state="running",
+        phase="benchmark",
+        started_at=now(),
+        message="GPU-Durchsatz wird gemessen",
+        best_model_available=False,
+    )
     try:
         report = run(
             project,
@@ -115,7 +120,11 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             json.dumps({"report": str(output / "summary.json"), **report}, indent=2)
         )
         state.update(
-            state="completed", phase="done", ended_at=now(), exit_code=0, message=f"GPU-Benchmark fertig: {output}",
+            state="completed",
+            phase="done",
+            ended_at=now(),
+            exit_code=0,
+            message=f"GPU-Benchmark fertig: {output}",
             best_model_available=False,
         )
     except BaseException as err:
@@ -149,6 +158,56 @@ def cmd_audit(args: argparse.Namespace) -> None:
         raise ProjectError("Einzelne Aufnahmen konnten nicht geprüft werden; Details stehen im privaten Bericht")
 
 
+def cmd_review(args: argparse.Namespace) -> None:
+    from datetime import UTC, datetime
+
+    from .review import run
+    from .state import State, now
+
+    project = Project.load(args.project)
+    state = State(project)
+    state.update(
+        state="running",
+        phase="review",
+        profile=args.profile,
+        started_at=now(),
+        best_model_available=False,
+        message="Unbestätigte Collector-Aufnahmen werden geprüft",
+    )
+    output = project.resolve(args.output or datetime.now(UTC).strftime("review/run_%Y%m%dT%H%M%S_%f"))
+    models = [project.resolve(path) for path in args.model]
+    if not models:
+        reference = project.config["deployment"]["reference_model"]
+        if reference and project.resolve(reference).is_file():
+            models = [project.resolve(reference)]
+    try:
+        result = run(
+            project,
+            output,
+            device=args.device or "",
+            created_after=args.since or "",
+            limit=args.limit,
+            stt_model=args.stt_model,
+            threads=args.threads,
+            models=models,
+            teachers=[project.resolve(path) for path in args.teacher],
+        )
+        if result.get("findings", {}).get("processing_error"):
+            raise ProjectError("Einzelne Prüfaufnahmen sind fehlgeschlagen; privater Bericht vorhanden")
+    except Exception as err:
+        state.update(state="failed", ended_at=now(), exit_code=1, last_error=str(err), best_model_available=False)
+        raise
+    state.update(
+        state="completed",
+        phase="done",
+        ended_at=now(),
+        exit_code=0,
+        best_model_available=False,
+        message=f"{result['unique_clips']} Aufnahmen geprüft; Labels unverändert",
+    )
+    print(f"{result['unique_clips']} Collector-Aufnahmen geprüft; Labels unverändert. Bericht: {output}")
+
+
 def cmd_teacher(args: argparse.Namespace) -> None:
     from .teacher import Teacher, import_checkpoint, train
 
@@ -158,10 +217,18 @@ def cmd_teacher(args: argparse.Namespace) -> None:
         import_checkpoint(project.resolve(args.checkpoint), project.resolve(args.config), target)
         print(f"Portabler Teacher: {target}")
     elif args.teacher_command == "train":
-        checkpoint = train(project, args.epochs, args.batch_size, args.seed, device=args.device,
-                           include_corpus=args.include_corpus, negative_limit=args.negative_limit,
-                           initial_model=project.resolve(args.initial_model) if args.initial_model else None,
-                           balanced_sources=args.balanced_sources, architecture=args.architecture)
+        checkpoint = train(
+            project,
+            args.epochs,
+            args.batch_size,
+            args.seed,
+            device=args.device,
+            include_corpus=args.include_corpus,
+            negative_limit=args.negative_limit,
+            initial_model=project.resolve(args.initial_model) if args.initial_model else None,
+            balanced_sources=args.balanced_sources,
+            architecture=args.architecture,
+        )
         print(f"Teacher gespeichert: {checkpoint}")
     else:
         from . import audio
@@ -345,6 +412,7 @@ COMMANDS = {
     "experiment": cmd_experiment,
     "benchmark": cmd_benchmark,
     "audit": cmd_audit,
+    "review": cmd_review,
     "teacher": cmd_teacher,
     "generate": cmd_generate,
     "features": cmd_features,
@@ -380,11 +448,22 @@ def parser() -> argparse.ArgumentParser:
     )
     download.add_argument("--data", action="store_true", help="with --voice/--speech: also the shared data")
     download.add_argument(
-        "--negative-set", action="append",
+        "--negative-set",
+        action="append",
         help="MMAP-Negativquelle; wiederholbar (alte *_background: 20 ms, nicht für aktuelles Training)",
     )
 
     sub.add_parser("fetch", help="own recordings from the collector and recordings.folders")
+    review = sub.add_parser("review", help="Unbestätigte Aufnahmen über Home Assistant abrufen und unabhängig prüfen")
+    review.add_argument("--output", help="neuer privater Snapshot-Ordner; Standard: eigener Ordner je Lauf")
+    review.add_argument("--device", help="Collector-Gerät, etwa sat1")
+    review.add_argument("--since", help="Speicherzeit ab ISO-Zeitstempel mit Zeitzone")
+    review.add_argument("--limit", type=int, default=500)
+    review.add_argument("--stt-model", default="medium")
+    review.add_argument("--threads", type=int, default=4)
+    review.add_argument("--model", action="append", default=[])
+    review.add_argument("--teacher", action="append", default=[])
+    review.add_argument("--profile", default="review")
     data = sub.add_parser("data", help="Datenquellen mit Rollen übernehmen und vor dem Training prüfen")
     data_sub = data.add_subparsers(dest="data_command", required=True)
     data_import = data_sub.add_parser("import")
@@ -484,7 +563,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if (
         argv is None
-        and args.command in {"run", "train", "teacher", "benchmark", "experiment", "serve", "audit"}
+        and args.command in {"run", "train", "teacher", "benchmark", "experiment", "serve", "audit", "review"}
         and not os.environ.get("WAKE_WORD_TRAINER_RUNTIME_READY")
     ):
         from .gpu import environment

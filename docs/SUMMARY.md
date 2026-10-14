@@ -25,6 +25,7 @@
 ## Home Assistant
 
 * [Trainer service for Home Assistant](service.md)
+* [Fehlaktivierungen direkt in Home Assistant prüfen](home-assistant-review.md)
 * [Sharing the GPU and checking resources](resources.md)
 * [Clip extraction from long recordings](extraction.md)
 * [Automatic firmware deployment](deployment.md)

@@ -566,3 +566,5 @@ activation audio as a negative; technical failures remain for review. The
 normal held-out comparison still gates each automatic deployment. Training on
 new negatives cannot guarantee an improvement: an equal or worse model is
 kept out of the devices.
+
+Für ungeprüfte Satellitenauslösungen: [Prüfung direkt in Home Assistant](docs/home-assistant-review.md).

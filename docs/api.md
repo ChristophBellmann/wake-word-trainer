@@ -9,6 +9,7 @@ The service started with `serve` listens on port 10701 by default. Every
 | `GET /v1/status` | state of the current or last run, best result, GPU, resources, profiles, speaker routes, extraction, deployment, automatic training |
 | `POST /v1/start` `{"profile": "<id>"}` | start a run with a configured profile (default `recommended`); 503 when the resource check refuses |
 | `POST /v1/stop` | stop the run; finished rounds are kept |
+| `GET /v1/review` | privater Detailbericht der letzten [Collector-Prüfung](home-assistant-review.md), einschließlich Transkripten |
 | `GET /v1/report` | evaluation of the exported model (`report.json`) |
 | `GET /v1/model/<slug>.json` / `.tflite` | the exported model for ESPHome |
 | `POST /v1/speaker_test` `{"route": "<name>"}` | play one held-out recording through a configured loudspeaker route |
@@ -27,6 +28,7 @@ settings can be sent.
 | `gpu` | detected GPU |
 | `resources` | memory, load, VRAM and a warning while a run swaps |
 | `profiles` | id → label |
+| `review_profiles`, `review` | Prüfprofile und Zusammenfassung ohne Transkripte |
 | `speaker_routes` | configured loudspeaker routes |
 | `extraction` | `enabled`, `available` |
 | `deployment` | state of the firmware rollout |

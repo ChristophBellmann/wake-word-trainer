@@ -25,6 +25,7 @@ profiles:                                   # what Home Assistant can start
   recommended: {label: Recommended, rounds: 2}
   thorough: {label: Thorough, rounds: 4, steps: 40000}
   validate: {label: Check data only, prepare_only: true}
+  review: {label: Fehldetektionen prüfen, kind: review, days: 7, stt_model: medium, threads: 4}
 speaker_test:                               # optional: play held-out recordings
   routes:
     speakers: [paplay, "{file}"]
@@ -65,3 +66,6 @@ a measurement with real sound, room and microphone.
 More: [sharing the GPU and checking resources](resources.md),
 [clip extraction](extraction.md), [automatic deployment](deployment.md),
 [idle-night training](automatic-training.md), [HTTP API](api.md).
+
+[Aufnahmen über Home Assistant prüfen](home-assistant-review.md) beschreibt
+den neuen Knopf, private Berichte und optionale Teacher-Bewertungen.

@@ -61,9 +61,8 @@ class Scheduler:
             time.fromisoformat(self.config["end"])
             if self.config["start"] == self.config["end"]:
                 raise ProjectError("automatic_training window must not cover the whole day")
-            if self.config["profile"] not in service.profiles or service.profiles[self.config["profile"]].get(
-                "prepare_only"
-            ):
+            profile = service.profiles.get(self.config["profile"])
+            if profile is None or profile.get("prepare_only") or profile.get("kind") in {"review", "benchmark"}:
                 raise ProjectError("automatic_training.profile must be a training profile")
             for key in ("idle_seconds", "min_new_samples", "min_interval_hours", "check_seconds"):
                 if float(self.config[key]) <= 0:

@@ -66,6 +66,7 @@ DEFAULT_PROFILES = {
     "recommended": {"label": "Recommended", "rounds": 2},
     "thorough": {"label": "Thorough", "rounds": 4, "steps": 40000},
     "validate": {"label": "Check data only", "prepare_only": True},
+    "review": {"label": "Fehldetektionen prüfen", "kind": "review", "days": 7, "stt_model": "medium"},
 }
 MODEL_FILE = re.compile(r"^[a-z0-9_]{1,64}\.(json|tflite)$")
 
@@ -132,13 +133,39 @@ class Service:
             self.project = Project.load(self.project.root)
             from .gpu import busy, environment
 
-            if not profile.get("prepare_only") and busy():
+            reviewing = profile.get("kind") == "review"
+            if not reviewing and not profile.get("prepare_only") and busy():
                 return 409, {"error": "GPU wird bereits von einem Trainer-, Teacher- oder Benchmark-Lauf belegt"}
             benchmarking = profile.get("kind") == "benchmark"
             command = [sys.executable, "-m", "wake_word_trainer", "-p", str(self.project.root)]
             if self.downloads:
                 command += ["--downloads", str(self.downloads)]
-            if benchmarking:
+            if reviewing:
+                from datetime import UTC, datetime, timedelta
+
+                days = int(profile.get("days", 7))
+                if not 1 <= days <= 365:
+                    return 400, {"error": "review days must be between 1 and 365"}
+                command += [
+                    "review",
+                    "--profile",
+                    profile_id,
+                    "--since",
+                    (datetime.now(UTC) - timedelta(days=days)).isoformat(),
+                    "--stt-model",
+                    str(profile.get("stt_model", "medium")),
+                    "--limit",
+                    str(int(profile.get("limit", 500))),
+                    "--threads",
+                    str(int(profile.get("threads", 4))),
+                ]
+                if profile.get("device"):
+                    command += ["--device", str(profile["device"])]
+                for value in profile.get("teachers", []):
+                    command += ["--teacher", str(value)]
+                for value in profile.get("models", []):
+                    command += ["--model", str(value)]
+            elif benchmarking:
                 folder = f"benchmarks/run_{int(time.time())}"
                 command += ["benchmark", "--output", folder, "--device", "gpu"]
                 for key, flag in [("steps", "--steps"), ("warmup", "--warmup"), ("repeats", "--repeats")]:
@@ -163,22 +190,34 @@ class Service:
             if problems:
                 # Nothing started: the last run's state stays as it was.
                 return 503, self._not_enough(problems, record=False)
-            State(self.project).update(state="starting", profile=profile_id, started_at=now(), message="")
+            State(self.project).update(
+                state="starting",
+                profile=profile_id,
+                started_at=now(),
+                message="",
+                **({"best_model_available": False} if reviewing else {}),
+            )
             log = self.project.path("service.log").open("a", encoding="utf-8")
             try:
                 self.resources.release()
-                self.resources.acquire()
-                problems = self.system.after_pause()
+                if not reviewing:
+                    self.resources.acquire()
+                problems = [] if reviewing else self.system.after_pause()
                 if problems:
                     self.resources.release()
                     return 503, self._not_enough(problems)
+                worker_environment = environment()
+                if reviewing:
+                    worker_environment.update(
+                        CUDA_VISIBLE_DEVICES="-1", HIP_VISIBLE_DEVICES="-1", ROCR_VISIBLE_DEVICES="-1"
+                    )
                 self.process = subprocess.Popen(
                     command,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                     cwd=self.project.root,
-                    env=environment(),
+                    env=worker_environment,
                 )
             except Exception as err:
                 self.resources.release()
@@ -187,7 +226,9 @@ class Service:
             finally:
                 log.close()
             self.resource_warning = ""
-            self.watcher = threading.Thread(target=self._finished, args=(self.process, not benchmarking), daemon=True)
+            self.watcher = threading.Thread(
+                target=self._finished, args=(self.process, not benchmarking and not reviewing), daemon=True
+            )
             self.watcher.start()
             threading.Thread(target=self._watch_resources, args=(self.process,), daemon=True).start()
         return 202, {"started": profile_id}
@@ -279,6 +320,7 @@ class Service:
             gpu=gpu(),
             resources={**self.system.snapshot(), "warning": self.resource_warning if self.running() else ""},
             profiles={key: value.get("label", key) for key, value in self.profiles.items()},
+            review_profiles=[key for key, value in self.profiles.items() if value.get("kind") == "review"],
             speaker_routes=sorted(self.routes),
             extraction={
                 "enabled": bool(self.extraction_config.get("enabled", False)),
@@ -291,6 +333,12 @@ class Service:
         benchmark = self.project.path("benchmark.json")
         if benchmark.is_file():
             state["benchmark"] = json.loads(benchmark.read_text())
+        review = self.project.path("review.json")
+        if review.is_file():
+            data = json.loads(review.read_text())
+            state["review"] = {
+                key: data.get(key) for key in ("unique_clips", "findings", "labels_changed", "truncated", "created_at")
+            }
         return state
 
     # -- Speaker test -------------------------------------------------------------
@@ -392,6 +440,7 @@ def handler(service: Service):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, no-store")
             self.end_headers()
             self.wfile.write(body)
 
@@ -418,6 +467,9 @@ def handler(service: Service):
                 return self._send(200, service.status())
             if path == "/v1/report":
                 report = service.project.path("report.json")
+                return self._send(200, report.read_bytes()) if report.is_file() else self._send(404, {})
+            if path == "/v1/review":
+                report = service.project.path("review.json")
                 return self._send(200, report.read_bytes()) if report.is_file() else self._send(404, {})
             if path.startswith("/v1/model/"):
                 model = service.model_file(path.rsplit("/", 1)[-1])

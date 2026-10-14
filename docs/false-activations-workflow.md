@@ -38,6 +38,10 @@ Allein gesprochenes „Momo“ bleibt bei einem Zweiwort-Modell negativ. Einige
 späte Lab-Experimente haben diese Semantik geändert; sie werden nicht allein
 wegen ihres Branchnamens übernommen.
 
+Die [Prüfung direkt in Home Assistant](home-assistant-review.md) ruft diese
+ungeprüften Clips mit dem Collector-Token ab und zeigt STT-/Modell-Ergebnisse
+in der Karte. Die Bestätigung bleibt beim Menschen.
+
 ## 2. Quellen und Beschriftungen unabhängig prüfen
 
 ```bash

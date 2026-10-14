@@ -67,3 +67,5 @@ GPU-Umgebung: [ROCm-/MIOpen-Update und Umzug vorbereiten](rocm-update.md).
   [licenses](licenses-and-privacy.md))
 
 Deutsch: [Überblick auf Deutsch](deutsch.md).
+
+Für ungeprüfte Satellitenauslösungen: [Prüfung direkt in Home Assistant](home-assistant-review.md).
