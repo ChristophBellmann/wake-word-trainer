@@ -98,6 +98,14 @@ alte angepasste Wheel. Tatsächlich verwendete weitere GPU-Pakete und die
 Interpreter der LLM-/TTS-Dienste werden getrennt erfasst. Nicht mehr genutzte
 Lab-Pakete werden nicht vorsorglich in den neuen Trainer installiert.
 
+Beim Neubau benötigen auch die Programme zur Erzeugung der TensorFlow-
+Schnittstellen die SDK-Bibliotheken. Bazels Verknüpfungen veränderten den
+Ausgangspunkt eines relativen LLVM-Suchpfads. Die C++- und Python-Generatoren
+erhalten deshalb gezielt die Bibliotheksverzeichnisse ihres `ROCM_PATH`;
+beide zuvor betroffenen Generatorziele sind damit erfolgreich gebaut.
+Diese begrenzte Anpassung erhält die bereits kompilierten Dateien im Cache.
+Der vollständige Wheel-Build und sein Training-/Exportnachweis stehen noch aus.
+
 Die aktive Installation bleibt bis zu einem gemeinsam geprüften Zielbestand
 erhalten. Die native SDK-Datei und die neuen Python-SDK-Pakete sind vorbereitet;
 der vollständige Paketwechsel bleibt ein eigener, noch nicht freigegebener Schritt.
@@ -137,3 +145,10 @@ Ein direkt mit dem neuen `hipcc`/AMD Clang 24 gebauter Kernel für `gfx1031`
 bestand die Prüfung aller 256 berechneten Werte auf der RX 6700 XT; dabei
 wurden keine Bibliotheken aus der alten `/opt/rocm`-Installation geladen.
 Das bestätigt den GPU-Compiler, ersetzt aber den TensorFlow-Wheel-Test nicht.
+
+Die Shell-Bestandsaufnahme umfasst `~/.bashrc` und systemweite Dateien in
+`/etc/profile.d/`. Auf der Workstation ergänzt `~/.bashrc` bewusst den
+kanonischen `/opt/rocm`-Pfad; eine zusätzliche alte Datei verwies dagegen
+auf das inzwischen fehlende `/opt/rocm-7.1.0`. Der vorbereitete Ersatz setzt
+die kanonischen Compiler-Pfade, ohne GPU-Bibliotheken global in jede Python-
+Umgebung einzumischen. Die vorhandene `.bashrc` bleibt erhalten.
