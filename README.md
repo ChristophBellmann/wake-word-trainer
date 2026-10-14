@@ -90,15 +90,34 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install /path/to/tensorflow_rocm*.whl            # your ROCm TensorFlow
 python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
 python - <<'PYTHON'
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-Path("keep.txt").write_text("".join(f"{name}=={version(name)}\n" for name in ("tensorflow", "numpy", "protobuf")))
+pins = []
+for name in ("tensorflow", "tensorflow-rocm", "numpy", "protobuf"):
+    try:
+        pins.append(f"{name}=={version(name)}\n")
+    except PackageNotFoundError:
+        pass
+Path("keep.txt").write_text("".join(pins))
 PYTHON
-pip install -c keep.txt "wake-word-trainer[train,tts] @ git+https://github.com/ChristophBellmann/wake-word-trainer"
+pip install --no-deps 'microwakeword @ git+https://github.com/ChristophBellmann/micro-wake-word@664a767db4474cd149d2d54038ab9144808951ef'
+python - <<'PYTHON'
+from importlib.metadata import requires
+from packaging.requirements import Requirement
+import subprocess, sys
+# AMD's tensorflow-rocm provides the module, but not pip's tensorflow name.
+deps = [r for r in requires("microwakeword")
+        if Requirement(r).name.lower().replace("_", "-") != "tensorflow"]
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-c", "keep.txt", *deps])
+PYTHON
+pip install -c keep.txt tensorboard "wake-word-trainer[tts] @ git+https://github.com/ChristophBellmann/wake-word-trainer"
 ```
 
-Die Constraints-Datei hält TensorFlow, NumPy und protobuf fest, auch wenn
-TensorFlow aus einer lokalen Wheel-Datei installiert wurde. Die
+Die Constraints-Datei hält die tatsächlich installierte TensorFlow-Distribution,
+NumPy und protobuf fest. AMD-Wheels können `tensorflow-rocm` heißen; pip
+behandelt das nicht als Ersatz für eine Abhängigkeit namens `tensorflow`.
+Deshalb wird microWakeWord ohne diesen automatischen Framework-Download
+installiert und seine übrigen Abhängigkeiten werden anschließend aufgelöst. Die
 Sprachgenerierung verwendet Piper direkt und braucht weder PyTorch noch den
 Piper Sample Generator mit dessen NumPy-2-Abhängigkeit. Das ist auch mit
 NumPy 1.26 geprüft. Bei systemd die ROCm-Bibliothekspfade des funktionierenden

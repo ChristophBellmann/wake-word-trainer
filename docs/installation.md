@@ -39,15 +39,37 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install /path/to/tensorflow_rocm*.whl            # your ROCm TensorFlow
 python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
 python - <<'PYTHON'
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-Path("keep.txt").write_text("".join(f"{name}=={version(name)}\n" for name in ("tensorflow", "numpy", "protobuf")))
+pins = []
+for name in ("tensorflow", "tensorflow-rocm", "numpy", "protobuf"):
+    try:
+        pins.append(f"{name}=={version(name)}\n")
+    except PackageNotFoundError:
+        pass
+Path("keep.txt").write_text("".join(pins))
 PYTHON
-pip install -c keep.txt "wake-word-trainer[train,tts] @ git+https://github.com/ChristophBellmann/wake-word-trainer"
+pip install --no-deps 'microwakeword @ git+https://github.com/ChristophBellmann/micro-wake-word@664a767db4474cd149d2d54038ab9144808951ef'
+python - <<'PYTHON'
+from importlib.metadata import requires
+from packaging.requirements import Requirement
+import subprocess, sys
+# AMD's tensorflow-rocm provides the module, but not pip's tensorflow name.
+deps = [r for r in requires("microwakeword")
+        if Requirement(r).name.lower().replace("_", "-") != "tensorflow"]
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-c", "keep.txt", *deps])
+PYTHON
+pip install -c keep.txt tensorboard "wake-word-trainer[tts] @ git+https://github.com/ChristophBellmann/wake-word-trainer"
 ```
 
-The constraints file keeps TensorFlow, NumPy and protobuf, also when
-TensorFlow came from a local wheel. Speech generation uses Piper directly and
+The constraints file keeps the installed TensorFlow distribution, NumPy and
+protobuf. AMD wheels can be named `tensorflow-rocm`: they provide the
+`tensorflow` module, but pip does not consider them a distribution named
+`tensorflow`. The commands therefore install microWakeWord without an
+additional framework download, then resolve its other declared dependencies.
+A `pip check` warning about microWakeWord's missing `tensorflow` distribution
+can remain with an AMD wheel; verify the actual module and GPU operation.
+Do not install a second TensorFlow distribution to silence that warning. Speech generation uses Piper directly and
 needs neither PyTorch nor the Piper Sample Generator with its NumPy 2
 dependency; it is tested with NumPy 1.26.
 
