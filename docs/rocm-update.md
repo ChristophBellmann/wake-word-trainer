@@ -133,3 +133,7 @@ Build-Nachweis. Die Workstation verwendet bisher AMD Clang 22 aus
 `/opt/rocm/llvm/bin`; das neue native SDK enthält AMD Clang 24. Der laufende
 TensorFlow-Neubau wählt explizit Clang 18 für Hostcode und das neue SDK für
 HIP. Die bestehende Shell-Auswahl bleibt während der Vorbereitung erhalten.
+Ein direkt mit dem neuen `hipcc`/AMD Clang 24 gebauter Kernel für `gfx1031`
+bestand die Prüfung aller 256 berechneten Werte auf der RX 6700 XT; dabei
+wurden keine Bibliotheken aus der alten `/opt/rocm`-Installation geladen.
+Das bestätigt den GPU-Compiler, ersetzt aber den TensorFlow-Wheel-Test nicht.
