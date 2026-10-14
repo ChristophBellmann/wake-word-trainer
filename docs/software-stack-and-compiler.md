@@ -190,7 +190,9 @@ stehen separat unter [Negativkorpora](negative-corpora.md).
 ## Wann ein neues Wheel in den Zielbestand darf
 
 Der neue SDK-Bestand ist vorbereitet. AMD-PyTorch samt MIOpen und Teacher-CLI
-ist separat geprüft; das neue TensorFlow-Wheel wird noch gebaut. Die
+ist separat geprüft; der neue TensorFlow-Wheel-Build ist beim
+HLO-Kernel-Generator erneut an einem Bibliothekssuchpfad gescheitert. Ein
+fertiges neues TensorFlow-Wheel liegt noch nicht vor. Die
 anschließende automatische Prüfung verwendet ausschließlich eine neue
 Python-Umgebung und erfasst:
 

@@ -108,7 +108,9 @@ Ausgangspunkt eines relativen LLVM-Suchpfads. Die C++- und Python-Generatoren
 erhalten deshalb gezielt die Bibliotheksverzeichnisse ihres `ROCM_PATH`;
 beide zuvor betroffenen Generatorziele sind damit erfolgreich gebaut.
 Diese begrenzte Anpassung erhält die bereits kompilierten Dateien im Cache.
-Der vollständige Wheel-Build und sein Training-/Exportnachweis stehen noch aus.
+Der vollständige Wheel-Build ist anschließend beim HLO-Kernel-Generator
+erneut an einem Bibliothekssuchpfad gescheitert. Sein Training-/Exportnachweis
+steht noch aus; der aktive TensorFlow-Bestand bleibt unverändert.
 Der Build verwendet nun alle 24 logischen CPUs der Workstation bei einem
 Scheduling-Limit von 18 GB RAM. Eine Fünf-Sekunden-Messung erreichte 99,3 %
 CPU-Auslastung bei noch 18,6 GiB verfügbarem RAM. Platten- und RAM-Reserven
@@ -147,7 +149,7 @@ gesetzt worden sein. Vor dem Wechsel die tatsächliche Datei mit
 erfassen; für `hipcc` ebenso. Framework-Builds dürfen Host- und GPU-Compiler
 getrennt auswählen. Beide Pfade und Versionen gehören dann in den
 Build-Nachweis. Die Workstation verwendet bisher AMD Clang 22 aus
-`/opt/rocm/llvm/bin`; das neue native SDK enthält AMD Clang 24. Der laufende
+`/opt/rocm/llvm/bin`; das neue native SDK enthält AMD Clang 24. Der geplante
 TensorFlow-Neubau wählt explizit Clang 18 für Hostcode und das neue SDK für
 HIP. Die bestehende Shell-Auswahl bleibt während der Vorbereitung erhalten.
 Ein direkt mit dem neuen `hipcc`/AMD Clang 24 gebauter Kernel für `gfx1031`
