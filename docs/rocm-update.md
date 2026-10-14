@@ -105,6 +105,11 @@ erhalten deshalb gezielt die Bibliotheksverzeichnisse ihres `ROCM_PATH`;
 beide zuvor betroffenen Generatorziele sind damit erfolgreich gebaut.
 Diese begrenzte Anpassung erhält die bereits kompilierten Dateien im Cache.
 Der vollständige Wheel-Build und sein Training-/Exportnachweis stehen noch aus.
+Der Build verwendet nun alle 24 logischen CPUs der Workstation bei einem
+Scheduling-Limit von 18 GB RAM. Eine Fünf-Sekunden-Messung erreichte 99,3 %
+CPU-Auslastung bei noch 18,6 GiB verfügbarem RAM. Platten- und RAM-Reserven
+werden während des Builds überwacht. Diese CPU-Messung betrifft den
+Framework-Neubau; die GPU-Durchsätze werden danach getrennt geprüft.
 
 Die aktive Installation bleibt bis zu einem gemeinsam geprüften Zielbestand
 erhalten. Die native SDK-Datei und die neuen Python-SDK-Pakete sind vorbereitet;
