@@ -72,10 +72,16 @@ class Report:
         return text
 
 
-def moving_average(probabilities: np.ndarray, window: int) -> np.ndarray:
+def moving_average(probabilities: np.ndarray, window: int, *, quantized: bool = False) -> np.ndarray:
     probabilities = np.asarray(probabilities, dtype=np.float64)
     if len(probabilities) < window:
         return np.zeros(0)
+    if quantized:
+        # microWakeWord returns uint8 output codes divided by 255. Recover
+        # them before summing, as ESPHome does, without cumulative float drift.
+        codes = np.rint(probabilities * 255).astype(np.int64)
+        cumulative = np.concatenate([[0], np.cumsum(codes)])
+        return (cumulative[window:] - cumulative[:-window]) / (255 * window)
     cumulative = np.concatenate([[0.0], np.cumsum(probabilities)])
     return (cumulative[window:] - cumulative[:-window]) / window
 
@@ -190,7 +196,7 @@ def measure(project: Project, model_path: Path, downloads: Path, window: int, am
     slice_seconds = model.stride * STEP_MS / 1000
 
     def scores(spectrogram: np.ndarray) -> np.ndarray:
-        return moving_average(np.asarray(model.predict_spectrogram(spectrogram)), window)
+        return moving_average(np.asarray(model.predict_spectrogram(spectrogram)), window, quantized=True)
 
     def peak(path: Path) -> float:
         samples = audio.read(path)

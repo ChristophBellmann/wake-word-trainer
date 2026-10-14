@@ -39,3 +39,15 @@ def test_measure_preserves_raw_ambient_scaling(monkeypatch, tmp_path):
     assert seen == [np.dtype("uint16"), np.dtype("float32")]
     assert result.faph[128] == 0
     assert result.hours > 0
+
+
+def test_quantized_mean_respects_exact_device_cutoffs_on_long_tracks():
+    # Fractional uint8 probabilities followed by exact boundary values exposed
+    # cumulative cancellation: the old mean could exceed one or the cutoff.
+    codes = np.concatenate([np.tile([17, 124, 253], 100000), np.full(10, 230), np.full(10, 255)])
+    result = evaluate.moving_average(codes / 255.0, 5, quantized=True)
+    sums = np.convolve(codes, np.ones(5, np.int64), mode="valid")
+    for threshold in (0, 127, 230, 254, 255):
+        np.testing.assert_array_equal(result > threshold / 255.0, sums > threshold * 5)
+    assert result.max() == 1.0
+    assert not (result > 1.0).any()

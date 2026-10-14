@@ -30,6 +30,14 @@ müssen dafür nicht neu trainiert werden. `evaluate`, `compare` und die
 Rollout-Prüfung verwenden dieselbe korrigierte Inferenz. Ein Regressionstest
 prüft Roh-MMAPs und bereits skalierte Features mit demselben Inhalt.
 
+Auch die Mittelung der quantisierten Ausgaben verwendet jetzt ganzzahlige
+Summen der ursprünglichen 8-Bit-Werte. Die vorherige Float-Kumulierung konnte
+an exakten Schwellen einen numerisch winzigen Überschuss erzeugen, sogar
+oberhalb von 1,0. Die Entscheidung entspricht damit dem
+[ESPHome-Vergleich der Summe gegen Schwelle × Fenstergröße](https://github.com/esphome/esphome/blob/dev/esphome/components/micro_wake_word/streaming_model.cpp).
+Der Regressionstest prüft lange Ausgabefolgen und exakte Grenzwerte einschließlich
+255/255. Die Korpus-Vergleiche werden mit beiden Korrekturen neu bewertet.
+
 ## Choosing the cutoff
 
 The most sensitive cutoff is chosen that stays within
