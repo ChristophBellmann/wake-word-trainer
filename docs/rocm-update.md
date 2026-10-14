@@ -112,7 +112,7 @@ den RX-6700-XT-Vergleich ist
 Umfang und Status bleiben in einem lokalen Vorbereitungsmanifest.
 
 1. Verbraucher erfassen: Trainer, Teacher, LLM, TTS, Dienste, Shell,
-   Linker-Konfiguration und lokale Wheel-Verweise.
+   Linker-Konfiguration, Compiler-Auswahl und lokale Wheel-Verweise.
 2. Training, Checkpoints, int8-Export und Inferenz prüfen. LLM/TTS brauchen
    eigene Funktionstests. Der Teacher-Benchmark ersetzt sie nicht.
 3. Alten Bestand als Rückweg erhalten; bei ruhiger GPU umschalten. Prozesse
@@ -123,3 +123,13 @@ Umfang und Status bleiben in einem lokalen Vorbereitungsmanifest.
 
 Die Vorbereitung aktiviert oder entfernt keine Systeminstallation. Der
 Rechnerplan muss tatsächliche Verbraucher, Umschaltung und Rückweg nennen.
+
+Eine frühere Verknüpfung oder ein Shell-Suchpfad für ROCm-Clang kann bewusst
+gesetzt worden sein. Vor dem Wechsel die tatsächliche Datei mit
+`command -v clang`, `readlink -f "$(command -v clang)"` und `clang --version`
+erfassen; für `hipcc` ebenso. Framework-Builds dürfen Host- und GPU-Compiler
+getrennt auswählen. Beide Pfade und Versionen gehören dann in den
+Build-Nachweis. Die Workstation verwendet bisher AMD Clang 22 aus
+`/opt/rocm/llvm/bin`; das neue native SDK enthält AMD Clang 24. Der laufende
+TensorFlow-Neubau wählt explizit Clang 18 für Hostcode und das neue SDK für
+HIP. Die bestehende Shell-Auswahl bleibt während der Vorbereitung erhalten.
