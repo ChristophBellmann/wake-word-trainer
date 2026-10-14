@@ -162,7 +162,7 @@ Nachweis einer Nullfehlerrate. Die Labelprüfung bleibt erforderlich; insbesonde
 darf ein leerer STT-Text nicht automatisch negativ werden.
 
 Der gemeinsame STFT-Pfad wurde an 3-, 10- und 30-Sekunden-Signalen mit drei
-Wiederholungen verglichen: rund drei- bis fünffach schneller, größte absolute
+Wiederholungen verglichen: Faktor 3,2 bis 5,6 schneller, größte absolute
 Feature-Abweichung unter 5e-7. Alle ursprünglichen Fenster bleiben erhalten.
 
 Microfrontend-MMAPs bleiben ausgeschlossen. Audio-Augmentation und das
