@@ -37,6 +37,8 @@ oberhalb von 1,0. Die Entscheidung entspricht damit dem
 [ESPHome-Vergleich der Summe gegen Schwelle × Fenstergröße](https://github.com/esphome/esphome/blob/dev/esphome/components/micro_wake_word/streaming_model.cpp).
 Der Regressionstest prüft lange Ausgabefolgen und exakte Grenzwerte einschließlich
 255/255. Die Korpus-Vergleiche werden mit beiden Korrekturen neu bewertet.
+`audit` und optionales Mining verwenden für quantisierte Student-Modelle
+dieselben exakten Fenstersummen. Float-Modelle behalten ihre Float-Ausgaben.
 
 ## Choosing the cutoff
 

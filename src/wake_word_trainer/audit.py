@@ -119,6 +119,7 @@ class Scorer:
         scores = moving_average(
             self.model.predict_spectrogram(generate_features_for_clip(padded, STEP_MS)),
             self.window,
+            quantized=getattr(self.model, "is_quantized_model", False),
         )
         return {**self.metadata, "peak": float(scores.max()) if len(scores) else 0.0}
 

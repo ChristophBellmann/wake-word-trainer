@@ -17,6 +17,7 @@ def test_measure_preserves_raw_ambient_scaling(monkeypatch, tmp_path):
 
     class Model:
         stride = 3
+        is_quantized_model = True
 
         def __init__(self, path):
             pass
@@ -51,3 +52,26 @@ def test_quantized_mean_respects_exact_device_cutoffs_on_long_tracks():
         np.testing.assert_array_equal(result > threshold / 255.0, sums > threshold * 5)
     assert result.max() == 1.0
     assert not (result > 1.0).any()
+
+
+def test_float_model_is_not_requantized(monkeypatch, tmp_path):
+    class Model:
+        stride = 3
+        is_quantized_model = False
+
+        def __init__(self, path):
+            pass
+
+        def predict_spectrogram(self, features):
+            # The real mean is just above 128/255. Rounding these two float
+            # outputs into uint8 codes would put it exactly on the cutoff.
+            return np.tile([0.498, 0.506], 100)
+
+    monkeypatch.setitem(sys.modules, "microwakeword.inference", SimpleNamespace(Model=Model))
+    monkeypatch.setitem(
+        sys.modules, "microwakeword.audio.audio_utils", SimpleNamespace(generate_features_for_clip=None)
+    )
+    monkeypatch.setattr(evaluate, "_positives", lambda p: ([], "own"))
+    monkeypatch.setattr(evaluate, "_ambient_tracks", lambda downloads, extra: [np.zeros((600, 40), np.float32)])
+    p = Project.create(tmp_path / "project", "Hey Nova")
+    assert evaluate.measure(p, tmp_path / "model", tmp_path, 2).faph[128] > 0

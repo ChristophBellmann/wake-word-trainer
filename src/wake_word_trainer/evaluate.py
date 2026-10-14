@@ -196,7 +196,10 @@ def measure(project: Project, model_path: Path, downloads: Path, window: int, am
     slice_seconds = model.stride * STEP_MS / 1000
 
     def scores(spectrogram: np.ndarray) -> np.ndarray:
-        return moving_average(np.asarray(model.predict_spectrogram(spectrogram)), window, quantized=True)
+        return moving_average(
+            np.asarray(model.predict_spectrogram(spectrogram)), window,
+            quantized=getattr(model, "is_quantized_model", False),
+        )
 
     def peak(path: Path) -> float:
         samples = audio.read(path)
