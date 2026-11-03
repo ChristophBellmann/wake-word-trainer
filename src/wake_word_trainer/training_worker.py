@@ -31,7 +31,8 @@ def main() -> None:
         )
         guard = (
             lease("student-training", inherited_fd=args.gpu_lock_fd)
-            if selected != "cpu" and not hidden else contextlib.nullcontext()
+            if selected != "cpu" and not hidden
+            else contextlib.nullcontext()
         )
         with guard:
             runtime = tensorflow_device(selected, int(config.get("compute_threads", 4)))

@@ -104,7 +104,8 @@ def feature_sets(project: Project, downloads: Path) -> list[dict]:
     if missing:
         logging.getLogger(__name__).warning(
             "Configured negative feature sets unavailable and omitted: %s (downloads: %s)",
-            ", ".join(missing), negatives,
+            ", ".join(missing),
+            negatives,
         )
     if (negatives / "dinner_party_eval").is_dir():
         # Long background recordings: only for false activations per hour in validation and test.

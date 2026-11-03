@@ -63,20 +63,26 @@ def _worker_features(job: tuple[str, int, int]) -> list[np.ndarray]:
     return result
 
 
-def parallel_spectrograms(project: Project, downloads: Path, clips: list[Path], repeat: int,
-                         slide: int, augment_kind: bool | None) -> Iterator[np.ndarray]:
+def parallel_spectrograms(
+    project: Project, downloads: Path, clips: list[Path], repeat: int, slide: int, augment_kind: bool | None
+) -> Iterator[np.ndarray]:
     """Geordnete, begrenzte CPU-Arbeit; unabhängig von Worker-Anzahl deterministisch."""
     workers = int(project.config["training"]["feature_workers"])
     seed = project.config["training"].get("seed")
     seed = 1337 if seed is None else int(seed)
     jobs = (
         (str(path), slide, int.from_bytes(hashlib.sha256(f"{seed}:{iteration}:{path}".encode()).digest()[:4], "big"))
-        for iteration in range(repeat) for path in clips
+        for iteration in range(repeat)
+        for path in clips
     )
+
     def create_pool():
-        return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
-                                   initializer=_initialize_worker,
-                                   initargs=(str(project.root), str(downloads), augment_kind))
+        return ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_initialize_worker,
+            initargs=(str(project.root), str(downloads), augment_kind),
+        )
 
     pool, restarts, pending = create_pool(), 0, deque()
 
@@ -101,8 +107,10 @@ def parallel_spectrograms(project: Project, downloads: Path, clips: list[Path], 
                         f"Diagnose: {project.path('feature-workers')}"
                     ) from err
                 restarts += 1
-                print(f"Feature-Prozess abgestürzt: offener Block wird vollständig neu verarbeitet ({restarts}/2)",
-                      flush=True)
+                print(
+                    f"Feature-Prozess abgestürzt: offener Block wird vollständig neu verarbeitet ({restarts}/2)",
+                    flush=True,
+                )
                 pool = create_pool()
                 pending = deque((job, submit(job)) for job, _ in pending)
             else:

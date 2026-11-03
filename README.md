@@ -71,6 +71,14 @@ Referenz; synthetische Tests allein erlauben keinen automatischen Rollout.
 
 ## Home Assistant und Entwicklung
 
+Der Trainer wird aus den
+[GitHub-Releases](https://github.com/ChristophBellmann/wake-word-trainer/releases)
+als Python-Dienst auf einer separaten Workstation installiert; siehe
+[Installation](docs/installation.md). In HACS wird ausschließlich der
+Collector als Integration hinzugefügt. Eine Home-Assistant-App für den
+Supervisor wird derzeit nicht ausgeliefert. GPU-Frameworks, Korpora und
+Trainingsdaten bleiben auf dem Trainingsrechner.
+
 Der [Dienst](docs/service.md) auf Port 10701 bietet vorkonfigurierte Profile,
 Status und private Prüfberichte an. Die Karte kann Aufnahmen prüfen, Training
 starten und Ergebnisse anzeigen. [Ressourcen](docs/resources.md) und

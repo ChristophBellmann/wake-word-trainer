@@ -10,10 +10,21 @@ from wake_word_trainer.project import Project
 def test_real_satellite_scores_produce_serializable_report(tmp_path):
     p = Project.create(tmp_path / "p", "Hey Nova")
     positives = [p.recordings / "eval" / "satellite" / "positive.wav"]
-    negatives = [p.recordings / "negative" / "eval" / device / "negative.wav"
-                 for device in ("satellite_a", "satellite_b", "local")]
-    measured = Measurement(p.path("model.tflite"), 5, positives, "own", np.array([0.9]),
-                           negatives, np.array([0.9, 0.2, 0.95]), np.zeros(256), 5.0)
+    negatives = [
+        p.recordings / "negative" / "eval" / device / "negative.wav"
+        for device in ("satellite_a", "satellite_b", "local")
+    ]
+    measured = Measurement(
+        p.path("model.tflite"),
+        5,
+        positives,
+        "own",
+        np.array([0.9]),
+        negatives,
+        np.array([0.9, 0.2, 0.95]),
+        np.zeros(256),
+        5.0,
+    )
     result = report(p, measured, 128, 0.5)
     decoded = json.loads(json.dumps(asdict(result)))
     assert decoded["own_negatives_triggered"] == 2

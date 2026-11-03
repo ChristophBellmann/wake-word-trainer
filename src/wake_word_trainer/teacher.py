@@ -34,12 +34,15 @@ def network(dropout: float = 0.2, architecture: str = "legacy_v2"):
     import torch.nn as nn
 
     if architecture == "temporal_v1":
+
         class Block(nn.Module):
             def __init__(self, dilation):
                 super().__init__()
                 self.layers = nn.Sequential(
                     nn.Conv1d(64, 64, 7, padding=3 * dilation, dilation=dilation, groups=64),
-                    nn.GroupNorm(8, 64), nn.SiLU(), nn.Conv1d(64, 64, 1),
+                    nn.GroupNorm(8, 64),
+                    nn.SiLU(),
+                    nn.Conv1d(64, 64, 1),
                 )
 
             def forward(self, x):
@@ -133,11 +136,14 @@ class Frontend:
         # Frame-Raster liegendes Fenster braucht seine eigene Transformation.
         full = self.clip(samples)
         frame_count = 1 + (self.length - self.params.win_length) // self.params.hop_length
-        return np.stack([
-            full[:, s // self.params.hop_length : s // self.params.hop_length + frame_count]
-            if s % self.params.hop_length == 0 else self.clip(samples[s : s + self.length])
-            for s in starts
-        ])
+        return np.stack(
+            [
+                full[:, s // self.params.hop_length : s // self.params.hop_length + frame_count]
+                if s % self.params.hop_length == 0
+                else self.clip(samples[s : s + self.length])
+                for s in starts
+            ]
+        )
 
 
 def save(path: Path, model, params: Parameters, **metadata) -> None:
@@ -235,9 +241,10 @@ def training_sources(project: Project, include_corpus: bool = False, negative_li
         from .features import _holdout
 
         preflight(project)
-        hashes = {row["path"]: row["sha256"] for row in (
-            json.loads(line) for line in project.path("dataset-manifest.jsonl").read_text().splitlines()
-        )}
+        hashes = {
+            row["path"]: row["sha256"]
+            for row in (json.loads(line) for line in project.path("dataset-manifest.jsonl").read_text().splitlines())
+        }
         sources["train_positive"] += audio.wavs(project.recordings / "hard")
         minimum = float(project.config["tts"]["min_positive_duration_seconds"])
         sources["train_positive"] += [
@@ -291,48 +298,76 @@ def source_balance(project: Project, sources: dict) -> tuple[np.ndarray, float, 
                 group = "own_negative" if path.parent.name == LOCAL else "satellite_negative"
         else:
             group = (
-                "speech_extra" if any(path.resolve().is_relative_to(folder) for folder in speech)
+                "speech_extra"
+                if any(path.resolve().is_relative_to(folder) for folder in speech)
                 else "background_negative"
             )
         groups.append(group)
     counts = Counter(groups)
     configured = project.config["training"]["weights"]
     weights = np.array([float(configured[g]) / counts[g] for g in groups], dtype=np.float64)
-    positive_mass = weights[:len(sources["train_positive"])].sum()
-    negative_mass = weights[len(sources["train_positive"]):].sum()
+    positive_mass = weights[: len(sources["train_positive"])].sum()
+    negative_mass = weights[len(sources["train_positive"]) :].sum()
     if positive_mass <= 0 or negative_mass <= 0:
         raise ProjectError("Teacher-Sampling benötigt positive und negative Quellgewichte")
     return weights, float(negative_mass / positive_mass), dict(counts)
 
 
-def training_window(project: Project, path: Path, samples: np.ndarray, length: int, seed: int,
-                    split: str, truth: float) -> np.ndarray:
+def training_window(
+    project: Project, path: Path, samples: np.ndarray, length: int, seed: int, split: str, truth: float
+) -> np.ndarray:
     # Bei Satellitenclips liegt der auslösende Laut am Ende des Ringpuffers.
     # Zufällig davor abzuschneiden würde genau den schwierigen Fall entfernen.
     external = not path.is_relative_to(project.recordings) and not path.is_relative_to(project.path("tts"))
     if split == "train" and not truth and external and len(samples) > length:
         clip_seed = int.from_bytes(hashlib.sha256(path.read_bytes()).digest()[:4], "big") ^ seed
         start = int(np.random.default_rng(clip_seed).integers(0, len(samples) - length + 1))
-        samples = samples[start:start + length]
+        samples = samples[start : start + length]
     else:
         samples = samples[-length:]
     return np.pad(samples, (0, max(0, length - len(samples))))
 
 
-def train(project: Project, epochs: int = 30, batch_size: int = 128, seed: int = 1337, device: str = "auto",
-          include_corpus: bool = False, negative_limit: int = 6000, initial_model: Path | None = None,
-          balanced_sources: bool = False, architecture: str = "legacy_v2") -> Path:
+def train(
+    project: Project,
+    epochs: int = 30,
+    batch_size: int = 128,
+    seed: int = 1337,
+    device: str = "auto",
+    include_corpus: bool = False,
+    negative_limit: int = 6000,
+    initial_model: Path | None = None,
+    balanced_sources: bool = False,
+    architecture: str = "legacy_v2",
+) -> Path:
     guard = lease("teacher-training") if device != "cpu" else contextlib.nullcontext()
     with guard:
         return _train(
-            project, epochs, batch_size, seed, torch_device(device), include_corpus, negative_limit, initial_model,
-            balanced_sources, architecture
+            project,
+            epochs,
+            batch_size,
+            seed,
+            torch_device(device),
+            include_corpus,
+            negative_limit,
+            initial_model,
+            balanced_sources,
+            architecture,
         )
 
 
-def _train(project: Project, epochs: int, batch_size: int, seed: int, device, include_corpus: bool = False,
-           negative_limit: int = 6000, initial_model: Path | None = None, balanced_sources: bool = False,
-           architecture: str = "legacy_v2") -> Path:
+def _train(
+    project: Project,
+    epochs: int,
+    batch_size: int,
+    seed: int,
+    device,
+    include_corpus: bool = False,
+    negative_limit: int = 6000,
+    initial_model: Path | None = None,
+    balanced_sources: bool = False,
+    architecture: str = "legacy_v2",
+) -> Path:
     """Geprüfte Labels; Holdouts bleiben aus dem Optimierer. GPU ausdrücklich wählbar."""
     import torch
     from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
@@ -344,9 +379,12 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
     sources = training_sources(project, include_corpus, negative_limit)
     if initial_model is not None:
         checkpoint = torch.load(initial_model, map_location="cpu", weights_only=True)
-        if (checkpoint.get("format") != FORMAT or checkpoint.get("feature_space") != "logmel"
-                or checkpoint.get("features") != asdict(frontend.params)
-                or checkpoint.get("architecture", "legacy_v2") != architecture):
+        if (
+            checkpoint.get("format") != FORMAT
+            or checkpoint.get("feature_space") != "logmel"
+            or checkpoint.get("features") != asdict(frontend.params)
+            or checkpoint.get("architecture", "legacy_v2") != architecture
+        ):
             raise ProjectError("Initialer Teacher hat inkompatible Log-Mel-Parameter")
         model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     print(f"Teacher training device: {device}", flush=True)
@@ -374,8 +412,9 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
     sampler, group_counts = None, {}
     if balanced_sources:
         weights, ratio, group_counts = source_balance(project, sources)
-        sampler = WeightedRandomSampler(weights, len(training), replacement=True,
-                                        generator=torch.Generator().manual_seed(seed))
+        sampler = WeightedRandomSampler(
+            weights, len(training), replacement=True, generator=torch.Generator().manual_seed(seed)
+        )
     source_report = {role: [str(p) for p in paths] for role, paths in sources.items()}
     project.path("teacher").mkdir(parents=True, exist_ok=True)
     project.path("teacher", "training-sources.json").write_text(json.dumps(source_report, indent=2))
@@ -404,11 +443,21 @@ def _train(project: Project, epochs: int, batch_size: int, seed: int, device, in
         print(f"Teacher: Epoche {epoch + 1}/{epochs}, Prüfloss {loss:.4f}", flush=True)
         if loss < best:
             best, stale = loss, 0
-            save(target, model, frontend.params, seed=seed, history=history, training_device=str(device),
-                 source_counts={role: len(paths) for role, paths in sources.items()}, include_corpus=include_corpus,
-                 balanced_sources=balanced_sources, group_counts=group_counts,
-                 architecture=architecture, negative_window_policy="owned_tail_external_random_v1",
-                 initial_sha256=hashlib.sha256(initial_model.read_bytes()).hexdigest() if initial_model else None)
+            save(
+                target,
+                model,
+                frontend.params,
+                seed=seed,
+                history=history,
+                training_device=str(device),
+                source_counts={role: len(paths) for role, paths in sources.items()},
+                include_corpus=include_corpus,
+                balanced_sources=balanced_sources,
+                group_counts=group_counts,
+                architecture=architecture,
+                negative_window_policy="owned_tail_external_random_v1",
+                initial_sha256=hashlib.sha256(initial_model.read_bytes()).hexdigest() if initial_model else None,
+            )
         else:
             stale += 1
         if stale >= 6:

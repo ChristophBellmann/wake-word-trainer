@@ -137,7 +137,7 @@ def test_shared_stft_keeps_all_original_teacher_windows(length, hop):
     starts = list(range(0, last + 1, max(1, round(hop * audio.RATE))))
     if starts[-1] != last:
         starts.append(last)
-    expected = np.stack([frontend.clip(padded[s:s + frontend.length]) for s in starts])
+    expected = np.stack([frontend.clip(padded[s : s + frontend.length]) for s in starts])
     actual = frontend.windows(samples, hop)
     np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=2e-6)
 
@@ -148,7 +148,7 @@ def test_large_corpus_cannot_dilute_satellite_examples_with_source_balancing(tmp
         sources = {
             "train_positive": [p.recordings / "train" / "satellite" / "p.wav"],
             "train_negative": [p.recordings / "negative" / "train" / "satellite" / "n.wav"]
-                              + [p.path("tts", "negative", f"{i}.wav") for i in range(size)],
+            + [p.path("tts", "negative", f"{i}.wav") for i in range(size)],
         }
         weights, ratio, groups = source_balance(p, sources)
         assert weights[1] / weights[1:].sum() == pytest.approx(4 / 7)

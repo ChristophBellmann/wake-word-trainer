@@ -197,7 +197,8 @@ def measure(project: Project, model_path: Path, downloads: Path, window: int, am
 
     def scores(spectrogram: np.ndarray) -> np.ndarray:
         return moving_average(
-            np.asarray(model.predict_spectrogram(spectrogram)), window,
+            np.asarray(model.predict_spectrogram(spectrogram)),
+            window,
             quantized=getattr(model, "is_quantized_model", False),
         )
 
@@ -254,10 +255,12 @@ def report(project: Project, m: Measurement, index: int | None, budget: float) -
         if m.negatives:
             result.own_negatives_triggered = m.triggered(index)
             result.triggered_by = [rel(p) for p, s in zip(m.negatives, m.negative_peaks, strict=True) if s > cutoff]
-            result.satellite_negatives_triggered = int(sum(
-                path.parent.name != LOCAL and score > cutoff
-                for path, score in zip(m.negatives, m.negative_peaks, strict=True)
-            ))
+            result.satellite_negatives_triggered = int(
+                sum(
+                    path.parent.name != LOCAL and score > cutoff
+                    for path, score in zip(m.negatives, m.negative_peaks, strict=True)
+                )
+            )
     return result
 
 

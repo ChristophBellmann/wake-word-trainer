@@ -75,8 +75,12 @@ def test_child_uses_parent_lease_without_releasing_it(tmp_path):
         "guard.__enter__(); guard.__exit__(None,None,None)"
     )
     with lease("parent", path) as handle:
-        subprocess.run([sys.executable, "-c", code, str(path), str(handle.fileno())],
-                       pass_fds=(handle.fileno(),), env=dict(os.environ), check=True)
+        subprocess.run(
+            [sys.executable, "-c", code, str(path), str(handle.fileno())],
+            pass_fds=(handle.fileno(),),
+            env=dict(os.environ),
+            check=True,
+        )
         assert busy(path)
     assert not busy(path)
 

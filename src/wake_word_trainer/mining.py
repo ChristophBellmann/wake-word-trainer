@@ -57,7 +57,8 @@ def mine(project: Project, model_path: Path, downloads: Path, round_number: int,
     for spectrogram in _sample(sources(project, downloads), int(settings["mining_samples"])):
         checked += 1
         averaged = moving_average(
-            np.asarray(model.predict_spectrogram(spectrogram)), window,
+            np.asarray(model.predict_spectrogram(spectrogram)),
+            window,
             quantized=getattr(model, "is_quantized_model", False),
         )
         if len(averaged) and averaged.max() > threshold:
