@@ -31,6 +31,58 @@ ROLES = {
     "derived_positive": "archive/derived_positive",
 }
 
+GROUP_FIELDS = ("parent_recording_id", "session_id", "speaker_id")
+PROVENANCE_FIELDS = (*GROUP_FIELDS, "capture_generation")
+INACTIVE_ROLES = {"unlabelled", "derived_positive", "background", "rir"}
+
+
+def provenance_fields(item: dict) -> dict:
+    """Only explicitly supplied, nonempty identifiers; never infer from filenames."""
+    result = {}
+    for field in PROVENANCE_FIELDS:
+        value = item.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise ProjectError(f"{field} benötigt eine nicht leere Zeichenkette oder null")
+        result[field] = value
+    return result
+
+
+def imported_provenance(project: Project) -> dict:
+    """Bind provenance to the recorded target AND content, not a filename alone."""
+    result = {}
+    report = project.path("dataset-import.jsonl")
+    if report.is_file():
+        for line in report.read_text(encoding="utf-8").splitlines():
+            item = json.loads(line)
+            key = (str(Path(item["target"]).resolve()), item["sha256"])
+            fields = result.setdefault(key, {})
+            for field, value in provenance_fields(item).items():
+                if field in fields and fields[field] != value:
+                    raise ProjectError(f"Widersprüchliche Herkunft: {field} für {item['target']}")
+                fields[field] = value
+    return result
+
+
+def provenance_report(items: list[dict], issues: list[dict]) -> dict:
+    active = [item for item in items if item["role"] not in INACTIVE_ROLES]
+    missing = {field: sum(not item.get(field) for item in active) for field in PROVENANCE_FIELDS}
+    known = any(item.get(field) for item in active for field in PROVENANCE_FIELDS)
+    partitions = {"eval" if item["role"].startswith("eval_") else "train" for item in active}
+    status = "unknown" if not known else "incomplete"
+    if active and not any(missing.values()) and partitions == {"train", "eval"}:
+        status = "known_groups_disjoint"
+    if issues:
+        status = "conflict"
+    return {
+        "status": status,
+        "files": len(active),
+        "missing": missing,
+        "partitions": sorted(partitions),
+        "note": "Nur angegebene Herkunft geprüft; keine unabhängige Abnahme oder Sprecheridentifikation.",
+    }
+
 
 def digest(path: Path) -> str:
     with path.open("rb") as source:
@@ -57,11 +109,18 @@ def validate_wav(path: Path) -> None:
 
 def conflicts(items: list[dict]) -> list[dict]:
     by_hash = defaultdict(set)
+    groups = defaultdict(set)
+    identities = defaultdict(lambda: defaultdict(set))
     for item in items:
         by_hash[item["sha256"]].add(item["role"])
+        fields = provenance_fields(item)
+        for field, value in fields.items():
+            identities[(item["role"], item["sha256"])][field].add(value)
+            if field in GROUP_FIELDS and item["role"] not in INACTIVE_ROLES:
+                groups[(field, value)].add(item["role"])
     issues = []
     for sha, roles in by_hash.items():
-        labelled = roles - {"unlabelled", "derived_positive", "background", "rir"}
+        labelled = roles - INACTIVE_ROLES
         positive = any("positive" in role for role in labelled)
         negative = any("negative" in role or role == "speech" for role in labelled)
         held = any(role.startswith("eval_") for role in labelled)
@@ -74,6 +133,13 @@ def conflicts(items: list[dict]) -> list[dict]:
                     "reason": "label_conflict" if positive and negative else "holdout_overlap",
                 }
             )
+    for (field, value), roles in sorted(groups.items()):
+        if any(role.startswith("eval_") for role in roles) and any(not role.startswith("eval_") for role in roles):
+            issues.append({"reason": "provenance_overlap", "field": field, "group": value, "roles": sorted(roles)})
+    for (role, sha), fields in sorted(identities.items()):
+        for field, values in sorted(fields.items()):
+            if len(values) > 1:
+                issues.append({"reason": "provenance_conflict", "field": field, "role": role, "sha256": sha})
     return issues
 
 
@@ -89,6 +155,7 @@ def import_sources(project: Project, manifest: Path, dry_run: bool = False) -> d
         role = source.get("role")
         if role not in ROLES:
             raise ProjectError(f"Unbekannte Datenrolle: {role}")
+        provenance = provenance_fields(source)
         folder = Path(source["folder"]).expanduser()
         folder = folder if folder.is_absolute() else manifest.parent / folder
         clips = audio.wavs(folder)
@@ -103,6 +170,7 @@ def import_sources(project: Project, manifest: Path, dry_run: bool = False) -> d
                     "sha256": sha,
                     "role": role,
                     "target": str(project.path(ROLES[role], sha + ".wav")),
+                    **provenance,
                 }
             )
     issues = conflicts(items + inventory(project))
@@ -110,6 +178,7 @@ def import_sources(project: Project, manifest: Path, dry_run: bool = False) -> d
         raise ProjectError(f"Import enthält {len(issues)} Labelkonflikte oder Überschneidungen mit Bewertungsdaten")
     unique = {(item["role"], item["sha256"]) for item in items}
     result = {"files": len(items), "unique_per_role": len(unique), "roles": dict(Counter(role for role, _ in unique))}
+    result["provenance"] = provenance_report(items, issues)
     if dry_run:
         return result
     # Alle Quellen wurden geprüft, bevor die erste Aufnahme kopiert wird.
@@ -144,6 +213,7 @@ def import_sources(project: Project, manifest: Path, dry_run: bool = False) -> d
 def inventory(project: Project, rehash: bool = False) -> list[dict]:
     items = []
     cached = {}
+    provenance = imported_provenance(project)
     manifest = project.path("dataset-manifest.jsonl")
     if manifest.is_file() and not rehash:
         for line in manifest.read_text(encoding="utf-8").splitlines():
@@ -164,7 +234,11 @@ def inventory(project: Project, rehash: bool = False) -> list[dict]:
         }
         previous = cached.get(str(path.resolve()), {})
         sha = previous.get("sha256") if all(previous.get(k) == v for k, v in identity.items()) else None
-        return {"path": str(path), "role": role, "sha256": sha or digest(path), **identity}
+        sha = sha or digest(path)
+        return {
+            "path": str(path), "role": role, "sha256": sha, **identity,
+            **provenance.get((str(path.resolve()), sha), {}),
+        }
 
     for role, folder in ROLES.items():
         for path in audio.wavs(project.path(folder)):
@@ -216,6 +290,7 @@ def preflight(project: Project, rehash: bool = False) -> dict:
         "files": len(items),
         "roles": dict(Counter(item["role"] for item in items)),
         "issues": issues,
+        "provenance": provenance_report(items, issues),
         "training_fingerprint": hashlib.sha256(json.dumps(active).encode()).hexdigest(),
     }
     manifest = project.path("dataset-manifest.jsonl")
