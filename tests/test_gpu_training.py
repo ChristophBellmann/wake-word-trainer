@@ -1,6 +1,7 @@
 """GPU-Belegung, skalierungstreue Graph-Schritte, Cache-Gates und vollständige Bewertung."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -11,11 +12,20 @@ from wake_word_trainer.project import Project, ProjectError
 
 def test_gpu_lease_is_exclusive_and_releases_after_failure(tmp_path):
     path = tmp_path / "gpu.lock"
-    with pytest.raises(RuntimeError), lease("first", path):
+    with pytest.raises(RuntimeError), lease("first", path) as outer:
         assert busy(path)
-        with pytest.raises(ProjectError, match="bereits"):
+        with lease("second", path) as inner:
+            assert inner is outer
+            assert busy(path)
+            assert json.loads(path.read_text())["job"] == "first"
+
+        def foreign_thread():
             with lease("second", path):
-                pass
+                pytest.fail("foreign thread reused the lease")
+
+        with ThreadPoolExecutor(max_workers=1) as pool, pytest.raises(ProjectError, match="bereits"):
+            pool.submit(foreign_thread).result(timeout=10)
+        assert busy(path)
         raise RuntimeError("interrupted")
     assert not busy(path)
     with lease("next", path):

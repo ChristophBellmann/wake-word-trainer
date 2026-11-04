@@ -32,3 +32,12 @@ def test_cuda_does_not_load_installed_system_rocm(monkeypatch):
     assert result["LD_LIBRARY_PATH"] == original["LD_LIBRARY_PATH"]
     assert "ROCM_PATH" not in result and "LD_PRELOAD" not in result
     assert not any(key.startswith("TF_ROCM_") for key in result)
+
+
+def test_cuda_does_not_inject_rocm_even_with_shell_rocm_path(monkeypatch, tmp_path):
+    monkeypatch.setattr("wake_word_trainer.gpu._tensorflow_cuda_build", lambda: True)
+    root = tmp_path / "rocm"
+    (root / "lib").mkdir(parents=True)
+    (root / "lib/librccl.so.1").touch()
+    result = environment({"ROCM_PATH": str(root), "LD_LIBRARY_PATH": "/cuda/lib"})
+    assert result["LD_LIBRARY_PATH"] == "/cuda/lib" and "LD_PRELOAD" not in result

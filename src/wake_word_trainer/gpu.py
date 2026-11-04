@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import contextlib
+import contextvars
 import importlib.util
 import json
 import os
+import threading
 import time
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -24,11 +28,11 @@ def _python_rocm_sdk() -> bool:
     return True
 
 
-def _tensorflow_rocm_build() -> bool:
-    """Read static build metadata without importing or initializing TensorFlow."""
+def _tensorflow_build_flags() -> dict:
+    """Statische Metadaten lesen, ohne TensorFlow oder eine GPU zu initialisieren."""
     spec = importlib.util.find_spec("tensorflow")
     if spec is None or not spec.origin:
-        return False
+        return {}
     path = Path(spec.origin).parent / "python/platform/build_info.py"
     try:
         tree = ast.parse(path.read_text())
@@ -39,10 +43,18 @@ def _tensorflow_rocm_build() -> bool:
                 value = node.value
                 if isinstance(value, ast.Call) and value.args:
                     value = value.args[0]
-                return dict(ast.literal_eval(value)).get("is_rocm_build") is True
+                return dict(ast.literal_eval(value))
     except (OSError, SyntaxError, ValueError, TypeError):
         pass
-    return False
+    return {}
+
+
+def _tensorflow_rocm_build() -> bool:
+    return _tensorflow_build_flags().get("is_rocm_build") is True
+
+
+def _tensorflow_cuda_build() -> bool:
+    return _tensorflow_build_flags().get("is_cuda_build") is True
 
 
 def environment(original: dict | None = None) -> dict:
@@ -51,7 +63,7 @@ def environment(original: dict | None = None) -> dict:
     # TheRock's Python packages initialize their matching libraries themselves.
     # Injecting /opt/rocm or its RCCL into them would mix two different stacks.
     python_sdk = not env.get("ROCM_PATH") and _python_rocm_sdk()
-    native_rocm = bool(env.get("ROCM_PATH")) or _tensorflow_rocm_build()
+    native_rocm = not _tensorflow_cuda_build() and (bool(env.get("ROCM_PATH")) or _tensorflow_rocm_build())
     if root.is_dir() and not python_sdk and native_rocm:
         env.setdefault("ROCM_PATH", str(root))
         for key, paths in {
@@ -73,18 +85,85 @@ def lock_path() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "wake-word-trainer/gpu.lock"
 
 
+@dataclass
+class _Lease:
+    owner: tuple
+    target: Path
+    fd: int
+    handle: object
+    active: bool = True
+
+
+_lease_context = contextvars.ContextVar("gpu_leases", default=())
+_active_leases: list[_Lease] = []
+
+
+def _owner() -> tuple:
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return os.getpid(), threading.current_thread(), task
+
+
+def _same_file(target: Path, fd: int) -> bool:
+    expected, actual = target.stat(), os.fstat(fd)
+    return (expected.st_dev, expected.st_ino) == (actual.st_dev, actual.st_ino)
+
+
+@contextlib.contextmanager
+def _owned_context(target: Path, fd: int, handle):
+    entry = _Lease(_owner(), target, fd, handle)
+    token = _lease_context.set((*_lease_context.get(), entry))
+    _active_leases.append(entry)
+    try:
+        yield handle
+    finally:
+        if os.getpid() == entry.owner[0]:
+            entry.active = False
+            _lease_context.reset(token)
+            _active_leases.remove(entry)
+
+
+def _after_fork() -> None:
+    # close(), never LOCK_UN: flock belongs to the parent's open description.
+    for entry in _active_leases:
+        entry.active = False
+        if entry.handle is not None:
+            entry.handle.close()
+    _active_leases.clear()
+    _lease_context.set(())
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork)
+
+
 @contextlib.contextmanager
 def lease(label: str, path: Path | None = None, inherited_fd: int | None = None):
-    """Eine GPU-Arbeit pro Benutzer; kein fork und keine parallelen HIP-Initialisierungen."""
+    """Eine GPU-Arbeit; nur lexikalisch geschachtelte Arbeit desselben Owners teilt sie."""
     import fcntl
 
-    target = path or lock_path()
+    target = (path or lock_path()).resolve()
+    owner = _owner()
+    for entry in reversed(_lease_context.get()):
+        if entry.active and entry.owner == owner and entry.target == target:
+            if not _same_file(target, entry.fd):
+                raise ProjectError("GPU-Sperrdatei wurde während der Belegung ersetzt")
+            if inherited_fd is not None and not _same_file(target, inherited_fd):
+                raise ProjectError("Geerbte GPU-Belegung gehört nicht zur gemeinsamen Sperrdatei")
+            yield entry.handle
+            return
     if inherited_fd is not None:
-        expected, actual = target.stat(), os.fstat(inherited_fd)
-        if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+        if not _same_file(target, inherited_fd):
             raise ProjectError("Geerbte GPU-Belegung gehört nicht zur gemeinsamen Sperrdatei")
+        # Explicit FD delegation to an exec worker remains supported, but cannot
+        # turn a different local thread/task into the owner of this job.
+        if any(entry.active and entry.owner != owner and _same_file(target, entry.fd) for entry in _active_leases):
+            raise ProjectError("GPU wird bereits von einem anderen Ausführungskontext belegt")
         fcntl.flock(inherited_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        yield None  # Der Elternprozess hält und beendet die Belegung.
+        with _owned_context(target, inherited_fd, None):
+            yield None  # Der Elternprozess hält und beendet die Belegung.
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a+") as handle:
@@ -93,16 +172,21 @@ def lease(label: str, path: Path | None = None, inherited_fd: int | None = None)
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as err:
             raise ProjectError("GPU wird bereits von einem Trainer-, Teacher- oder Benchmark-Lauf belegt") from err
-        handle.seek(0)
-        handle.truncate()
-        json.dump({"pid": os.getpid(), "job": label, "started_at": time.time()}, handle)
-        handle.flush()
         try:
-            yield handle
-        finally:
             handle.seek(0)
             handle.truncate()
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            json.dump({"pid": os.getpid(), "job": label, "started_at": time.time()}, handle)
+            handle.flush()
+            with _owned_context(target, handle.fileno(), handle):
+                yield handle
+        finally:
+            if os.getpid() == owner[0]:
+                try:
+                    handle.seek(0)
+                    handle.truncate()
+                    handle.flush()
+                finally:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def busy(path: Path | None = None) -> bool:
