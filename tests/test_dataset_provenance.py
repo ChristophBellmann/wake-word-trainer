@@ -92,10 +92,14 @@ def test_preflight_detects_group_added_to_existing_ledger(tmp_path, field):
         preflight(project)
     report = json.loads(project.path("dataset-check.json").read_text())
     assert report["provenance"]["status"] == "conflict"
-    assert report["issues"] == [{
-        "reason": "provenance_overlap", "field": field, "group": "confirmed-common-origin",
-        "roles": ["eval_negative", "train_positive"],
-    }]
+    assert report["issues"] == [
+        {
+            "reason": "provenance_overlap",
+            "field": field,
+            "group": "confirmed-common-origin",
+            "roles": ["eval_negative", "train_positive"],
+        }
+    ]
 
 
 def test_legacy_and_partial_provenance_are_not_reported_as_independent(tmp_path):

@@ -236,7 +236,10 @@ def inventory(project: Project, rehash: bool = False) -> list[dict]:
         sha = previous.get("sha256") if all(previous.get(k) == v for k, v in identity.items()) else None
         sha = sha or digest(path)
         return {
-            "path": str(path), "role": role, "sha256": sha, **identity,
+            "path": str(path),
+            "role": role,
+            "sha256": sha,
+            **identity,
             **provenance.get((str(path.resolve()), sha), {}),
         }
 
