@@ -206,6 +206,7 @@ class Teacher:
             "feature_space": "logmel",
             "device": str(self.device),
             "architecture": architecture,
+            "target_phrases": checkpoint.get("target_phrases", []),
         }
 
     def __call__(self, samples: np.ndarray) -> dict:
@@ -226,25 +227,38 @@ class Teacher:
         }
 
 
-def training_sources(project: Project, include_corpus: bool = False, negative_limit: int = 6000) -> dict:
+def training_sources(
+    project: Project,
+    include_corpus: bool = False,
+    negative_limit: int = 6000,
+    extra_positive: list[Path] | None = None,
+    extra_eval_positive: list[Path] | None = None,
+) -> dict:
     """Nur WAV-Quellen: externer Holdout folgt demselben Split wie beim Student."""
+    from .datasets import conflicts, digest, imported_provenance, inventory, provenance_report, validate_wav
+
     if negative_limit < 1:
         raise ProjectError("Teacher-Korpuslimit muss positiv sein")
+    for folder in [*(extra_positive or []), *(extra_eval_positive or [])]:
+        if not folder.is_dir() or not audio.wavs(folder):
+            raise ProjectError(f"Zusätzliche Teacher-Quelle fehlt oder ist leer: {folder}")
+    # Reuse the project's content cache and explicit import provenance, but
+    # evaluate conflicts in the roles actually selected for this Teacher.
+    indexed = {str(Path(row["path"]).resolve()): row for row in inventory(project)}
+    provenance = imported_provenance(project)
+    imported_hashes = {}
+    for target, sha in provenance:
+        imported_hashes.setdefault(target, set()).add(sha)
     sources = {
-        "train_positive": audio.wavs(project.recordings / "train"),
+        "train_positive": audio.wavs(project.recordings / "train", *(extra_positive or [])),
         "train_negative": audio.wavs(project.recordings / "negative" / "train"),
-        "eval_positive": audio.wavs(project.recordings / "eval"),
+        "eval_positive": audio.wavs(project.recordings / "eval", *(extra_eval_positive or [])),
         "eval_negative": audio.wavs(project.recordings / "negative" / "eval"),
     }
     if include_corpus:
-        from .datasets import preflight
         from .features import _holdout
 
-        preflight(project)
-        hashes = {
-            row["path"]: row["sha256"]
-            for row in (json.loads(line) for line in project.path("dataset-manifest.jsonl").read_text().splitlines())
-        }
+        hashes = {row["path"]: row["sha256"] for row in indexed.values()}
         sources["train_positive"] += audio.wavs(project.recordings / "hard")
         minimum = float(project.config["tts"]["min_positive_duration_seconds"])
         sources["train_positive"] += [
@@ -261,24 +275,60 @@ def training_sources(project: Project, include_corpus: bool = False, negative_li
             if len(paths) > negative_limit:
                 paths = [paths[int(i * len(paths) / negative_limit)] for i in range(negative_limit)]
             sources["train_negative"] += paths
-    # Inhalt statt Dateiname: jeder Clip nur einmal, keine gegenläufigen Labels.
-    seen = {}
-    result = {}
+    # Check every selected origin before content deduplication; an alias must
+    # not conceal a group overlap. External Teacher-only paths use the same
+    # target+hash ledger binding as ordinary imported recordings.
+    items = []
+    seen_paths = set()
+    changed = []
     for role, paths in sources.items():
-        result[role] = []
         for path in paths:
-            sha = hashlib.sha256(path.read_bytes()).hexdigest()
-            if sha in seen:
-                previous = seen[sha]
-                if previous != role:
-                    raise ProjectError("Teacher-Training verweigert: identischer Inhalt in verschiedenen Datenrollen")
+            target = str(path.resolve())
+            if (role, target) in seen_paths:
                 continue
-            seen[sha] = role
-            result[role].append(path)
+            seen_paths.add((role, target))
+            validate_wav(path)
+            sha = indexed[target]["sha256"] if target in indexed else digest(path)
+            items.append({"path": str(path), "role": role, "sha256": sha, **provenance.get((target, sha), {})})
+            if imported_hashes.get(target, {sha}) != {sha}:
+                changed.append({"reason": "import_changed", "path": str(path)})
+    issues = conflicts(items) + changed
+    report = {
+        "scope": "teacher_selected_sources_before_content_deduplication",
+        "files": len(items),
+        "issues": issues,
+        "provenance": provenance_report(items, issues),
+    }
+    directory = project.path("teacher")
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, body in (
+        ("dataset-manifest.jsonl", "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in items)),
+        ("dataset-check.json", json.dumps(report, ensure_ascii=False, indent=2) + "\n"),
+    ):
+        target = directory / name
+        target.write_text(body, encoding="utf-8")
+        target.chmod(0o600)
+    if issues:
+        raise ProjectError(
+            "Teacher-Training verweigert: Konflikte in verschiedenen Datenrollen, "
+            "Training/Bewertung-Überschneidungen oder veränderte Importe; "
+            f"{directory / 'dataset-check.json'}"
+        )
+    seen = set()
+    result = {}
+    for role in sources:
+        result[role] = []
+    for item in items:
+        identity = (item["role"], item["sha256"])
+        if identity not in seen:
+            seen.add(identity)
+            result[item["role"]].append(Path(item["path"]))
     return result
 
 
-def source_balance(project: Project, sources: dict) -> tuple[np.ndarray, float, dict]:
+def source_balance(
+    project: Project, sources: dict, extra_positive: list[Path] | None = None, extra_positive_weight: float = 3.0
+) -> tuple[np.ndarray, float, dict]:
     """Fester Anteil pro Quelle statt Verdünnung eigener Mikrofonaufnahmen."""
     from collections import Counter
 
@@ -289,7 +339,9 @@ def source_balance(project: Project, sources: dict) -> tuple[np.ndarray, float, 
     speech = [project.resolve(p).resolve() for p in project.config["negatives"]["speech_folders"]]
     for index, path in enumerate(paths):
         positive = index < len(sources["train_positive"])
-        if path.is_relative_to(project.path("tts")):
+        if positive and any(path.is_relative_to(folder) for folder in extra_positive or []):
+            group = "teacher_extra_positive"
+        elif path.is_relative_to(project.path("tts")):
             group = "tts" if positive else "tts_negative"
         elif path.is_relative_to(project.recordings):
             if positive:
@@ -304,7 +356,7 @@ def source_balance(project: Project, sources: dict) -> tuple[np.ndarray, float, 
             )
         groups.append(group)
     counts = Counter(groups)
-    configured = project.config["training"]["weights"]
+    configured = {**project.config["training"]["weights"], "teacher_extra_positive": extra_positive_weight}
     weights = np.array([float(configured[g]) / counts[g] for g in groups], dtype=np.float64)
     positive_mass = weights[: len(sources["train_positive"])].sum()
     negative_mass = weights[len(sources["train_positive"]) :].sum()
@@ -339,7 +391,20 @@ def train(
     initial_model: Path | None = None,
     balanced_sources: bool = False,
     architecture: str = "legacy_v2",
+    learning_rate: float = 0.001,
+    extra_positive: list[Path] | None = None,
+    extra_eval_positive: list[Path] | None = None,
+    extra_positive_weight: float = 3.0,
+    target_phrases: list[str] | None = None,
 ) -> Path:
+    if not np.isfinite(learning_rate) or not 0 < learning_rate <= 0.01:
+        raise ProjectError("Teacher-Lernrate muss größer null und höchstens 0,01 sein")
+    if not np.isfinite(extra_positive_weight) or extra_positive_weight <= 0:
+        raise ProjectError("Zusätzlicher Teacher-Positivanteil muss positiv sein")
+    sources = training_sources(project, include_corpus, negative_limit, extra_positive, extra_eval_positive)
+    for split in ("train", "eval"):
+        if not sources[f"{split}_positive"] or not sources[f"{split}_negative"]:
+            raise ProjectError(f"Teacher benötigt positive und negative Aufnahmen in {split}")
     guard = lease("teacher-training") if device != "cpu" else contextlib.nullcontext()
     with guard:
         return _train(
@@ -353,6 +418,12 @@ def train(
             initial_model,
             balanced_sources,
             architecture,
+            learning_rate,
+            extra_positive,
+            extra_eval_positive,
+            extra_positive_weight,
+            target_phrases,
+            sources=sources,
         )
 
 
@@ -367,6 +438,13 @@ def _train(
     initial_model: Path | None = None,
     balanced_sources: bool = False,
     architecture: str = "legacy_v2",
+    learning_rate: float = 0.001,
+    extra_positive: list[Path] | None = None,
+    extra_eval_positive: list[Path] | None = None,
+    extra_positive_weight: float = 3.0,
+    target_phrases: list[str] | None = None,
+    *,
+    sources: dict,
 ) -> Path:
     """Geprüfte Labels; Holdouts bleiben aus dem Optimierer. GPU ausdrücklich wählbar."""
     import torch
@@ -376,7 +454,7 @@ def _train(
     torch.manual_seed(seed)
     frontend = Frontend(Parameters())
     model = network(0.25, architecture).to(device)
-    sources = training_sources(project, include_corpus, negative_limit)
+    print(f"Teacher-Gerät: {device}; Quellenprüfung vor Geräteinitialisierung abgeschlossen", flush=True)
     if initial_model is not None:
         checkpoint = torch.load(initial_model, map_location="cpu", weights_only=True)
         if (
@@ -398,7 +476,9 @@ def _train(
         # Die Bewertung prüft dagegen alle gleitenden Fenster.
         features, labels = [], []
         for truth, paths in ((1.0, positives), (0.0, negatives)):
-            for path in paths:
+            for index, path in enumerate(paths, 1):
+                if index % 1000 == 0:
+                    print(f"Teacher-Features: {split}, Klasse {int(truth)}, {index}/{len(paths)} (CPU)", flush=True)
                 samples = audio.read(path)
                 samples = training_window(project, path, samples, frontend.length, seed, split, truth)
                 features.append(frontend.clip(samples))
@@ -411,7 +491,7 @@ def _train(
     validation, _ = dataset("eval")
     sampler, group_counts = None, {}
     if balanced_sources:
-        weights, ratio, group_counts = source_balance(project, sources)
+        weights, ratio, group_counts = source_balance(project, sources, extra_positive, extra_positive_weight)
         sampler = WeightedRandomSampler(
             weights, len(training), replacement=True, generator=torch.Generator().manual_seed(seed)
         )
@@ -419,7 +499,7 @@ def _train(
     project.path("teacher").mkdir(parents=True, exist_ok=True)
     project.path("teacher", "training-sources.json").write_text(json.dumps(source_report, indent=2))
     print(f"Teacher-Quellen: { {role: len(paths) for role, paths in sources.items()} }", flush=True)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0001)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([ratio], device=device))
     target = project.path("teacher", "model.pt")
     best, stale, history = float("inf"), 0, []
@@ -454,6 +534,10 @@ def _train(
                 include_corpus=include_corpus,
                 balanced_sources=balanced_sources,
                 group_counts=group_counts,
+                target_phrases=list(
+                    dict.fromkeys(target_phrases or [project.config["wake_word"], *project.config["tts"]["phrases"]])
+                ),
+                learning_rate=learning_rate,
                 architecture=architecture,
                 negative_window_policy="owned_tail_external_random_v1",
                 initial_sha256=hashlib.sha256(initial_model.read_bytes()).hexdigest() if initial_model else None,

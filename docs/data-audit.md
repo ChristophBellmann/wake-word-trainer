@@ -160,3 +160,70 @@ auf heutigen Satellitenaufnahmen entscheidet, ob der neue Teacher hilft.
 
 Für Herkunft, sichere Datenübernahme und getrennte Seed-Läufe:
 [Datenübernahme mit Herkunft](data-import.md).
+
+## Zusätzliche Teacher-Ziele ohne Änderung des Students
+
+Ein Teacher kann andere akustische Prüfziele haben als der Student, etwa eine
+vollständige Phrase und zusätzlich deren Namen. Diese Quellen müssen
+Teacher-spezifisch bleiben. Kurze echte Wörter dürfen nicht allein wegen des
+Dauerfilters synthetischer Student-Aufrufe verschwinden.
+
+```bash
+wake-word-trainer -p teacher_project teacher train --device gpu \
+  --include-corpus --balanced-sources --architecture temporal_v1 \
+  --positive-folder additional_positive/train \
+  --eval-positive-folder additional_positive/eval --positive-weight 3 \
+  --target-phrase 'hey nova' --target-phrase 'nova' \
+  --learning-rate 0.0001 --initial-model teacher/reference.pt
+```
+
+Die zusätzlichen Positive haben einen eigenen Sampling-Anteil und unterliegen
+nicht dem TTS-Dauerfilter des Students. Gegenläufige Labels oder derselbe
+Inhalt in Trainings- und Prüfrollen werden abgelehnt. Ziele, Lernrate und
+Quellen stehen im Checkpoint und in privaten Berichten. Ein Warmstart benötigt
+dieselbe Architektur und dasselbe Log-Mel-Frontend.
+
+Vor GPU-Belegung, Gerätewahl und PyTorch-/Modellinitialisierung prüft der
+Teacher immer die tatsächlich ausgewählten Quellen, auch ohne
+`--include-corpus`. Er verwendet dafür dieselbe Inventur, Konfliktprüfung und
+Provenienzbewertung wie der Datenimport. Bekannte Aufnahme-, Sitzungs- oder
+Sprechergruppen dürfen nicht gleichzeitig in Training und Bewertung liegen,
+auch wenn die Audiohashs verschieden sind. Nicht ausgewählte TTS-/Korpusdateien
+werden nicht als Teacher-Trainingsrollen gewertet.
+
+Für zusätzliche Teacher-Ordner gelten vorhandene Angaben aus
+`dataset-import.jsonl` nur bei übereinstimmendem aufgelöstem `target`-Pfad
+**und** `sha256`. Optional belegt sind `parent_recording_id`, `session_id`,
+`speaker_id` und `capture_generation`; die gemeinsame Audiostrecke allein
+verursacht keinen Gruppenkonflikt. Ein veränderter importierter Inhalt wird
+abgelehnt. Eine gleichlautende oder bytegleiche Datei an einem anderen Pfad
+erbt keine Herkunft automatisch. Ohne belegte Angaben bleibt die Herkunft
+`unknown` oder `incomplete`; das ist kein Unabhängigkeitsnachweis.
+
+Die privaten Dateien `teacher/dataset-manifest.jsonl` und
+`teacher/dataset-check.json` halten ausgewählte Pfade, Rollen, Hashs,
+Herkunftsangaben, Konflikte und fehlende Angaben fest. Die Prüfung umfasst
+alle ausgewählten Ursprünge vor der anschließenden Deduplizierung identischer
+Inhalte innerhalb einer Rolle, damit ein Alias keinen Gruppenkonflikt
+verdeckt. Quellen, Student-Konfiguration, Importledger und bestehende
+Splitzuordnungen werden dabei nicht verändert. Die Checkpoint-Auswahl auf
+dem Teacher-Evalbestand bleibt eine Modellauswahl und ersetzt keinen neuen,
+unabhängigen Abnahmetest.
+
+```mermaid
+flowchart LR
+  A[Bestätigte vollständige Aufrufe] --> S[Student: Microfrontend]
+  A --> T[Teacher: Log-Mel]
+  B[Zusätzliche Teacher-Ziele] --> T
+  T --> P[Eigene Zielprüfung und Kalibrierung]
+  P --> R[Zusätzliche Prüfstimme]
+  R -. keine automatische Positivfreigabe .-> S
+```
+
+Ein breiteres Teacher-Ziel verändert die Bedeutung seiner Negativzahlen:
+ein einzelner Name kann für ihn positiv und für den Zweiwort-Student negativ
+sein. Beides ausdrücklich getrennt bewerten. Ein schlechterer vollständiger
+Aufruf darf nicht durch einen besseren zusätzlichen Zielwert verdeckt werden.
+Für eine Negativrichtlinie nur auf den jeweiligen Zielen geprüfte Modelle
+freigeben. Große STT und Gegenprüfung sind im [HA-Ablauf](home-assistant-review.md)
+konfigurierbar.
