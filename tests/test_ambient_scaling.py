@@ -39,7 +39,17 @@ def test_measure_preserves_raw_ambient_scaling(monkeypatch, tmp_path):
     result = evaluate.measure(project, tmp_path / "model.tflite", tmp_path, 5)
     assert seen == [np.dtype("uint16"), np.dtype("float32")]
     assert result.faph[128] == 0
-    assert result.hours > 0
+    assert result.hours == 600 * 0.01 / 3600  # no sliding-window time is dropped
+    assert result.ambient_event_counting["policy"] == evaluate.AMBIENT_EVENT_POLICY
+    assert result.ambient_event_counting["stride"] == 3
+    assert result.ambient_event_counting["quantized"] is True
+    assert result.ambient_event_counting["vad_gate"] == "always_open"
+    assert result.ambient_event_counting["stop_after_detection"] is False
+    assert evaluate.report(project, result, 128, 0.5).ambient_event_counting == result.ambient_event_counting
+    # Zero events at cutoff zero means a permanently disarmed detector.
+    assert (
+        result.choose({"max_false_accepts_per_hour": 0, "min_probability_cutoff": 0, "max_own_negative_share": 0}) == 1
+    )
 
 
 def test_quantized_mean_respects_exact_device_cutoffs_on_long_tracks():

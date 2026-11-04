@@ -17,7 +17,7 @@ import yaml
 
 from wake_word_trainer import audio, downloads, piper_generate, recordings, tts
 from wake_word_trainer.cli import main
-from wake_word_trainer.evaluate import COOLDOWN_SLICES, Report, choose, false_accepts_per_hour, moving_average
+from wake_word_trainer.evaluate import Report, choose, moving_average
 from wake_word_trainer.export import export, manifest
 from wake_word_trainer.project import Project, ProjectError, slugify
 from wake_word_trainer.training import config as training_config
@@ -260,16 +260,6 @@ def test_zip_slip_is_refused(tmp_path):
 def test_moving_average():
     assert np.allclose(moving_average(np.array([0, 1, 1, 1, 0]), 3), [2 / 3, 1, 2 / 3])
     assert len(moving_average(np.array([1.0]), 3)) == 0
-
-
-def test_false_accepts_respect_cooldown():
-    track = np.zeros(4000)
-    track[100:110] = 0.9  # one activation despite ten slices above the cutoff
-    track[100 + COOLDOWN_SLICES + 5] = 0.6  # a second, weaker one after the cooldown
-    cutoffs = np.array([0.5, 0.7, 0.95])
-    faph, hours = false_accepts_per_hour([track], cutoffs)
-    assert hours == pytest.approx(4000 * 0.03 / 3600)
-    assert faph * hours == pytest.approx([2, 1, 0])
 
 
 def test_choose_lowest_cutoff_within_budget():

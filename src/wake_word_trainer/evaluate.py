@@ -1,7 +1,7 @@
-"""How well the streaming model works, measured the way the satellite runs it.
+"""Streaming model evaluation with an explicit continuous-listening event policy.
 
 * Recall on your own held-out recordings (recordings/eval), each preceded by
-  a second of silence and followed by half a second, as the device hears it.
+  a second of silence and followed by half a second (a clip diagnostic).
 * False activations per hour on long background recordings (dinner party
   noise, the microWakeWord evaluation set).
 
@@ -26,9 +26,10 @@ from .features import STEP_MS
 from .project import Project, ProjectError
 from .recordings import LOCAL
 
-STRIDE = 3
-SLICE_SECONDS = STRIDE * STEP_MS / 1000
-COOLDOWN_SLICES = 25  # after an activation the device ignores ~0.75 s
+# ESPHome 2026.9.1, micro_wake_word/streaming_model.h. These are FEATURE
+# steps below the cutoff, not inference steps or a fixed elapsed cooldown.
+MIN_FEATURE_STEPS_BEFORE_DETECTION = 100
+AMBIENT_EVENT_POLICY = "esphome-2026.9.1-continuous-v1"
 CUTOFFS = np.arange(256) / 255.0
 
 
@@ -53,6 +54,8 @@ class Report:
     # The part of them recorded by the satellites (Collector), i.e. real false activations at home.
     satellite_negatives: int = 0
     satellite_negatives_triggered: int | None = None
+    # None on old reports: never retroactively claim the new event semantics.
+    ambient_event_counting: dict | None = None
 
     def summary(self) -> str:
         if self.probability_cutoff is None:
@@ -86,26 +89,104 @@ def moving_average(probabilities: np.ndarray, window: int, *, quantized: bool = 
     return (cumulative[window:] - cumulative[:-window]) / window
 
 
+def count_activations(
+    probabilities: np.ndarray,
+    cutoffs: np.ndarray = CUTOFFS,
+    *,
+    window: int,
+    stride: int,
+    quantized: bool = True,
+    feature_count: int | None = None,
+) -> np.ndarray:
+    """Count events from RAW inference outputs, resetting the window after each.
+
+    Matches ESPHome 2026.9.1's enabled WakeWordModel and process_probabilities_
+    with VAD always open and stop_after_detection=false. Start with a zero
+    window and 100 below-cutoff feature steps outstanding. Each output arrives
+    on the last feature of its stride; intervening features use the last value.
+    An ignored pending output can become eligible BETWEEN model invocations.
+
+    Quantized probabilities/cutoffs are mapped to uint8 codes before comparing
+    integer sums. Float inputs retain their precision as a diagnostic analogue,
+    not a claim that ESPHome runs float models. Each call is a new track.
+    """
+    probabilities = np.asarray(probabilities, dtype=np.float64)
+    cutoffs = np.asarray(cutoffs, dtype=np.float64)
+    for values in (probabilities, cutoffs):
+        if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any((values < 0) | (values > 1)):
+            raise ValueError("Probabilities and cutoffs must be finite one-dimensional values in [0, 1]")
+    if window < 1 or stride < 1 or int(window) != window or int(stride) != stride:
+        raise ValueError("Window and stride must be positive integers")
+    window, stride = int(window), int(stride)
+    consumed = len(probabilities) * stride
+    feature_count = consumed if feature_count is None else feature_count
+    if int(feature_count) != feature_count or not consumed <= feature_count < consumed + stride:
+        raise ValueError("Feature count must match the raw inference output count and stride")
+    if quantized:
+        probabilities = np.rint(probabilities * 255).astype(np.int64)
+        cutoffs = np.rint(cutoffs * 255).astype(np.int64)
+
+    recent = np.zeros((len(cutoffs), window), dtype=probabilities.dtype)
+    remaining = np.full(len(cutoffs), MIN_FEATURE_STEPS_BEFORE_DETECTION)
+    pending = np.zeros(len(cutoffs), dtype=bool)
+    counts = np.zeros(len(cutoffs), dtype=np.int64)
+    position = 0
+
+    def advance(steps: int) -> None:
+        if not steps:
+            return
+        # No new output during these steps. Batch them without losing the
+        # exact rearm point: any remaining steps after a detection see zeros.
+        before = remaining.copy()
+        remaining[:] = np.maximum(0, remaining - steps * (recent[:, position] < cutoffs))
+        ready = pending & (remaining == 0)
+        detected = ready & (recent.sum(axis=1) > cutoffs * window)
+        pending[ready] = False  # determine_detected leaves ignored outputs pending
+        counts[detected] += 1
+        recent[detected] = 0
+        remaining[detected] = np.maximum(
+            0, MIN_FEATURE_STEPS_BEFORE_DETECTION - (steps - np.maximum(1, before[detected]))
+        )
+
+    for probability in probabilities:
+        advance(stride - 1)
+        position = (position + 1) % window
+        recent[:, position] = probability
+        pending[:] = True
+        advance(1)
+    advance(int(feature_count) - consumed)
+    return counts
+
+
 def false_accepts_per_hour(
-    tracks: Iterable[np.ndarray], cutoffs: np.ndarray = CUTOFFS, slice_seconds: float = SLICE_SECONDS
+    tracks: Iterable[np.ndarray],
+    cutoffs: np.ndarray = CUTOFFS,
+    *,
+    window: int,
+    stride: int,
+    quantized: bool = True,
+    feature_counts: Iterable[int] | None = None,
 ) -> tuple[np.ndarray, float]:
-    """Activations above each cutoff (with the device's cooldown) per hour of audio."""
-    cooldown = max(1, round(COOLDOWN_SLICES * SLICE_SECONDS / slice_seconds))
-    counts = np.zeros(len(cutoffs))
-    slices = 0
+    """Continuous-listening events / feature hours, including startup/rearm time.
+
+    Tracks contain raw inference outputs, not moving averages. Explicit feature
+    counts include trailing features without a new output. This denominator is
+    frontend exposure, not wall-clock uptime or VAD/assistant-adjusted uptime.
+    """
+    counts = np.zeros(len(cutoffs), dtype=np.int64)
+    total_features = 0
+    lengths = iter(feature_counts) if feature_counts is not None else None
     for track in tracks:
-        track = np.asarray(track)
-        slices += len(track)
-        for index, cutoff in enumerate(cutoffs):
-            above = np.flatnonzero(track > cutoff)
-            next_allowed = -1
-            for position in above:
-                if position >= next_allowed:
-                    counts[index] += 1
-                    next_allowed = position + cooldown
-            if len(above) == 0:
-                break  # higher cutoffs cannot activate either
-    hours = slices * slice_seconds / 3600
+        frames = len(track) * stride if lengths is None else next(lengths, None)
+        if frames is None:
+            raise ValueError("Missing feature count for a track")
+        counts += count_activations(
+            track, cutoffs, window=window, stride=stride, quantized=quantized, feature_count=frames
+        )
+        total_features += frames
+    if lengths is not None and next(lengths, None) is not None:
+        raise ValueError("More feature counts than tracks")
+    hours = total_features * STEP_MS / 1000 / 3600
     if hours == 0:
         raise ProjectError("No background audio to measure false activations")
     return counts / hours, hours
@@ -165,6 +246,7 @@ class Measurement:
     negative_peaks: np.ndarray
     faph: np.ndarray
     hours: float
+    ambient_event_counting: dict | None = None
 
     def recall(self, index: int) -> float:
         return float((self.positive_peaks > CUTOFFS[index]).mean()) if len(self.positive_peaks) else 0.0
@@ -178,10 +260,16 @@ class Measurement:
         return np.array([(self.negative_peaks > cutoff).mean() for cutoff in CUTOFFS])
 
     def choose(self, settings: dict) -> int | None:
+        minimum = float(settings["min_probability_cutoff"])
+        if self.ambient_event_counting is not None:
+            # At zero no feature can be strictly below the cutoff. Its zero
+            # event rate is a permanently disarmed detector, not a usable
+            # setting, even when the separate clip-peak recall is positive.
+            minimum = max(minimum, float(CUTOFFS[1]))
         return choose(
             self.faph,
             float(settings["max_false_accepts_per_hour"]),
-            float(settings["min_probability_cutoff"]),
+            minimum,
             self.negative_share(),
             float(settings["max_own_negative_share"]),
         )
@@ -193,13 +281,13 @@ def measure(project: Project, model_path: Path, downloads: Path, window: int, am
 
     # A streaming model takes `stride` feature frames per inference: that is its input length.
     model = Model(str(model_path))
-    slice_seconds = model.stride * STEP_MS / 1000
+    quantized = getattr(model, "is_quantized_model", False)
 
     def scores(spectrogram: np.ndarray) -> np.ndarray:
         return moving_average(
             np.asarray(model.predict_spectrogram(spectrogram)),
             window,
-            quantized=getattr(model, "is_quantized_model", False),
+            quantized=quantized,
         )
 
     def peak(path: Path) -> float:
@@ -212,8 +300,14 @@ def measure(project: Project, model_path: Path, downloads: Path, window: int, am
     negatives = audio.wavs(project.recordings / "negative" / "eval")
     # Model.predict_spectrogram scales raw uint16 microfrontend features itself.
     # Preserve the dtype: casting here would make it skip that conversion.
-    ambient = [scores(track) for track in _ambient_tracks(downloads, ambient_extra)]
-    faph, hours = false_accepts_per_hour(ambient, slice_seconds=slice_seconds)
+    ambient = _ambient_tracks(downloads, ambient_extra)
+    faph, hours = false_accepts_per_hour(
+        (np.asarray(model.predict_spectrogram(track)) for track in ambient),
+        window=window,
+        stride=model.stride,
+        quantized=quantized,
+        feature_counts=(len(track) for track in ambient),
+    )
     return Measurement(
         model=model_path,
         window=window,
@@ -224,6 +318,17 @@ def measure(project: Project, model_path: Path, downloads: Path, window: int, am
         negative_peaks=np.array([peak(path) for path in negatives]),
         faph=faph,
         hours=hours,
+        ambient_event_counting={
+            "policy": AMBIENT_EVENT_POLICY,
+            "quantized": quantized,
+            "stride": int(model.stride),
+            "feature_step_ms": STEP_MS,
+            "rearm_below_cutoff_feature_steps": MIN_FEATURE_STEPS_BEFORE_DETECTION,
+            "vad_gate": "always_open",
+            "stop_after_detection": False,
+            "reset_per_track": True,
+            "duration_basis": "feature_frames",
+        },
     )
 
 
@@ -248,6 +353,7 @@ def report(project: Project, m: Measurement, index: int | None, budget: float) -
         ],
         own_negatives=len(m.negatives),
         satellite_negatives=sum(path.parent.name != LOCAL for path in m.negatives),
+        ambient_event_counting=m.ambient_event_counting,
     )
     if index is not None:
         cutoff = CUTOFFS[index]
