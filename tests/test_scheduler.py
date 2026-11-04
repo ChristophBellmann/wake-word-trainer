@@ -136,3 +136,23 @@ def test_error_clears_after_a_good_check(tmp_path, monkeypatch):
     monkeypatch.setattr(s, "tick", lambda: None)
     s._loop()
     assert "error" not in s.status
+
+
+def test_collector_manifest_hashes_drive_new_sample_detection(tmp_path, server):
+    import json
+
+    digest1, digest2 = "a" * 64, "b" * 64
+    mock = server(
+        {
+            "/api/wake_word_collector/export/hey_nova": json.dumps(
+                {"candidates": [{"sha256": digest1}, {"sha256": digest1}]}
+            ).encode(),
+            "/api/wake_word_collector/export/hey_nova/negatives": json.dumps(
+                {"negatives": [{"sha256": digest2}]}
+            ).encode(),
+        }
+    )
+    p = Project.create(tmp_path, "Hey Nova", collector={"url": mock.url, "token_file": "token"})
+    p.path("token").write_text("test-token")
+    s = Scheduler(SimpleNamespace(project=p), {})
+    assert s.samples() == {f"candidates:{digest1}", f"negatives:{digest2}"}

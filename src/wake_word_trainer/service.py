@@ -36,6 +36,7 @@ Configuration (YAML):
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import importlib.util
 import json
@@ -71,8 +72,97 @@ DEFAULT_PROFILES = {
 MODEL_FILE = re.compile(r"^[a-z0-9_]{1,64}\.(json|tflite)$")
 
 
+def _source_manifest(root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*.py"))
+    }
+
+
+# Runs under -I -S: bind source before site hooks, trainer or frameworks load.
+# The loader compiles verified bytes, never an old timestamp-valid .pyc file.
+_WORKER_BOOTSTRAP = r"""
+import hashlib
+import importlib.abc
+import importlib.util
+import json
+from pathlib import Path
+import runpy
+import sys
+
+def fail():
+    raise SystemExit("Worker source binding missing or changed")
+
+try:
+    root = Path(sys.argv[1])
+    expected = json.loads(sys.argv[2])
+    if not root.is_absolute() or root.resolve() != root:
+        fail()
+    actual = {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*.py"))
+    }
+    if not expected or actual != expected or "__init__.py" not in expected or "__main__.py" not in expected:
+        fail()
+except (IndexError, OSError, ValueError, TypeError):
+    fail()
+
+class BoundSource(importlib.abc.SourceLoader):
+    def __init__(self, path):
+        self.path = path
+
+    def get_filename(self, fullname):
+        return str(self.path)
+
+    def get_data(self, path):
+        return Path(path).read_bytes()
+
+    def get_code(self, fullname):
+        data = self.path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != expected.get(self.path.relative_to(root).as_posix()):
+            fail()
+        return compile(data, str(self.path), "exec", dont_inherit=True)
+
+class BoundPackage(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        parts = fullname.split(".")
+        if parts[0] != "wake_word_trainer":
+            return None
+        relative = Path(*parts[1:]) if len(parts) > 1 else Path()
+        package = root / relative / "__init__.py"
+        source = package if package.is_file() else root / relative.with_suffix(".py")
+        if source.relative_to(root).as_posix() not in expected:
+            fail()
+        return importlib.util.spec_from_file_location(
+            fullname, source, loader=BoundSource(source),
+            submodule_search_locations=[str(source.parent)] if source == package else None,
+        )
+
+if any(name == "wake_word_trainer" or name.startswith("wake_word_trainer.") for name in sys.modules):
+    fail()
+finder = BoundPackage()
+sys.meta_path.insert(0, finder)
+import site
+site.main()  # Keep this interpreter's dependencies/venv; ignore PYTHON* and user site (-I).
+sys.meta_path.remove(finder)
+sys.meta_path.insert(0, finder)
+for name, module in tuple(sys.modules.items()):
+    if name == "wake_word_trainer" or name.startswith("wake_word_trainer."):
+        if not isinstance(getattr(module, "__loader__", None), BoundSource):
+            fail()
+sys.argv = ["wake_word_trainer", *sys.argv[3:]]
+runpy.run_module("wake_word_trainer", run_name="__main__", alter_sys=True)
+"""
+
+
+def _worker_command(python: Path, source: Path, manifest: dict[str, str]) -> list[str]:
+    return [str(python), "-I", "-S", "-B", "-u", "-c", _WORKER_BOOTSTRAP, str(source), json.dumps(manifest)]
+
+
 class Service:
     def __init__(self, config: dict[str, Any]):
+        self.worker_source = Path(__file__).resolve().parent
+        self.worker_manifest = _source_manifest(self.worker_source)
         self.project = Project.load(config["project"])
         self.downloads = Path(config["downloads"]).expanduser() if config.get("downloads") else None
         token_file = Path(config["token_file"]).expanduser()
@@ -134,14 +224,31 @@ class Service:
             from .gpu import busy, environment
 
             reviewing = profile.get("kind") == "review"
-            if not reviewing and not profile.get("prepare_only") and busy():
+            cpu_review = reviewing and profile.get("stt_device", "cpu") == "cpu"
+            if reviewing and not cpu_review and profile.get("stt_backend") != "torch_whisper":
+                return 400, {"error": "GPU-Prüfung benötigt torch_whisper"}
+            if not cpu_review and not profile.get("prepare_only") and busy():
                 return 409, {"error": "GPU wird bereits von einem Trainer-, Teacher- oder Benchmark-Lauf belegt"}
             benchmarking = profile.get("kind") == "benchmark"
-            command = [sys.executable, "-m", "wake_word_trainer", "-p", str(self.project.root)]
+            python = (
+                Path(profile.get("worker_python", sys.executable)).expanduser() if reviewing else Path(sys.executable)
+            )
+            if not python.is_absolute() or not python.is_file():
+                return 400, {"error": "Konfigurierter Workerinterpreter muss eine vorhandene absolute Datei sein"}
+            if reviewing and profile.get("skip_student") and profile.get("models"):
+                return 400, {"error": "skip_student und models sind nicht gemeinsam erlaubt"}
+            try:
+                source_matches = _source_manifest(self.worker_source) == self.worker_manifest
+            except OSError:
+                source_matches = False
+            if not source_matches:
+                return 503, {"error": "Trainerquelle seit Controllerstart geändert; Controller neu starten"}
+            command = _worker_command(python, self.worker_source, self.worker_manifest)
+            command += ["-p", str(self.project.root)]
             if self.downloads:
                 command += ["--downloads", str(self.downloads)]
             if reviewing:
-                from datetime import UTC, datetime, timedelta
+                from datetime import datetime, timedelta, timezone
 
                 days = int(profile.get("days", 7))
                 if not 1 <= days <= 365:
@@ -151,7 +258,7 @@ class Service:
                     "--profile",
                     profile_id,
                     "--since",
-                    (datetime.now(UTC) - timedelta(days=days)).isoformat(),
+                    (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
                     "--stt-model",
                     str(profile.get("stt_model", "medium")),
                     "--limit",
@@ -159,6 +266,18 @@ class Service:
                     "--threads",
                     str(int(profile.get("threads", 4))),
                 ]
+                for key, flag in [
+                    ("stt_backend", "--stt-backend"),
+                    ("stt_device", "--stt-device"),
+                    ("stt_language", "--stt-language"),
+                    ("stt_cache", "--stt-cache"),
+                    ("verification_model", "--verification-model"),
+                    ("negative_policy", "--negative-policy"),
+                ]:
+                    if profile.get(key):
+                        command += [flag, str(profile[key])]
+                if profile.get("skip_student"):
+                    command += ["--skip-student"]
                 if profile.get("device"):
                     command += ["--device", str(profile["device"])]
                 for value in profile.get("teachers", []):
@@ -200,17 +319,35 @@ class Service:
             log = self.project.path("service.log").open("a", encoding="utf-8")
             try:
                 self.resources.release()
-                if not reviewing:
+                if not cpu_review:
                     self.resources.acquire()
-                problems = [] if reviewing else self.system.after_pause()
+                problems = [] if cpu_review else self.system.after_pause()
                 if problems:
                     self.resources.release()
                     return 503, self._not_enough(problems)
                 worker_environment = environment()
-                if reviewing:
+                if reviewing and profile.get("isolated_runtime"):
+                    worker_environment = os.environ.copy()
+                    for key in (
+                        "ROCM_PATH",
+                        "HIP_PATH",
+                        "HSA_PATH",
+                        "HIP_CLANG_PATH",
+                        "LD_LIBRARY_PATH",
+                        "LD_PRELOAD",
+                        "HSA_OVERRIDE_GFX_VERSION",
+                        "WAKE_WORD_TRAINER_RUNTIME_READY",
+                    ):
+                        worker_environment.pop(key, None)
+                if cpu_review:
                     worker_environment.update(
                         CUDA_VISIBLE_DEVICES="-1", HIP_VISIBLE_DEVICES="-1", ROCR_VISIBLE_DEVICES="-1"
                     )
+                # Never inherit Python loader controls, including PYTHONHOME.
+                # GPU loader handling above remains governed by isolated_runtime.
+                worker_environment = {
+                    key: value for key, value in worker_environment.items() if not key.startswith("PYTHON")
+                }
                 self.process = subprocess.Popen(
                     command,
                     stdout=log,
@@ -258,6 +395,10 @@ class Service:
         with self.lock:
             if self.process is not process:
                 return
+            if process.returncode and read(self.project).get("state") == "starting":
+                State(self.project).update(
+                    state="failed", ended_at=now(), last_error="Worker failed before initialization; see service.log"
+                )
             try:
                 self.resources.release()
             except Exception as err:
@@ -299,9 +440,11 @@ class Service:
                 os.killpg(self.process.pid, signal.SIGTERM)
                 self.process.wait(timeout=10)
             self.resources.release()
-        state = read(self.project)
-        if state.get("state") in ("running", "starting"):
-            State(self.project).update(state="stopped", ended_at=now(), message="Stopped")
+            # Publish the intentional stop before the completion watcher can
+            # interpret the interrupted startup as an unexpected worker exit.
+            state = read(self.project)
+            if state.get("state") in ("running", "starting"):
+                State(self.project).update(state="stopped", ended_at=now(), message="Stopped")
         return 200, {"stopped": True}
 
     def status(self) -> dict:

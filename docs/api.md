@@ -26,16 +26,33 @@ Datei. HTTP-Antworten sind als privat und nicht zu speichern gekennzeichnet.
 | `wake_word`, `slug` | Projektkennung |
 | `gpu`, `resources` | Gerät, RAM, Last und Warnungen |
 | `profiles` | Profilkennung → sichtbarer Name |
-| `review_profiles`, `review` | Prüfprofile und Zusammenfassung ohne Transkripte |
+| `review_profiles`, `review` | Prüfprofile und Zusammenfassung ohne Transkripte; `labels_changed` zählt tatsächlich übernommene Negative |
 | `speaker_routes` | konfigurierte Lautsprecherrouten |
 | `extraction` | Freigabe und Verfügbarkeit der Spracherkennung |
 | `deployment` | Stand des Firmware-Rollouts |
 | `automatic_training` | Stand und Wartegrund der Nachtplanung |
 
 ```bash
-curl -s -H "Authorization: Bearer $(cat ~/.config/wake-word-trainer/service.token)" \
-  http://localhost:10701/v1/status | python3 -m json.tool
+python3 - <<'PY'
+import json
+from pathlib import Path
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+token = Path("~/.config/wake-word-trainer/service.token").expanduser().read_text().strip()
+request = Request("http://localhost:10701/v1/status", headers={"Authorization": f"Bearer {token}"})
+with build_opener(NoRedirect).open(request, timeout=10) as response:
+    print(json.dumps(json.load(response), indent=2, ensure_ascii=False))
+PY
 ```
+
+Das Beispiel liest die bestehende `token_file` des Dienstes (hier der Standardpfad).
+Bei abweichender Einrichtung denselben Dateipfad verwenden. Der Header entsteht
+im Prozess; der Token erscheint weder in Shellsubstitutionen noch Prozessargumenten
+und wird bei einer HTTP-Umleitung nicht weitergereicht.
 
 [Prüfschnittstelle zum Collector](home-assistant-review.md),
 [Extraktion](extraction.md) und [Dienstkonfiguration](service.md) erklären

@@ -68,11 +68,12 @@ class Recognizer:
     def __init__(self, model: str, language: str, threads: int):
         from faster_whisper import WhisperModel
 
-        self.language = language
+        self.language = None if language == "auto" else language
+        self.details = {}
         self.model = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=threads)
 
     def __call__(self, samples: np.ndarray) -> tuple[str, list[dict]]:
-        segments, _ = self.model.transcribe(
+        segments, info = self.model.transcribe(
             samples,
             language=self.language,
             beam_size=5,
@@ -80,15 +81,25 @@ class Recognizer:
             condition_on_previous_text=False,
             vad_filter=True,
         )
-        text, words = [], []
+        text, words, statistics = [], [], []
         for segment in segments:
             if segment.no_speech_prob > 0.6 and segment.avg_logprob < -1:
                 continue
+            statistics.append(
+                {
+                    "start": segment.start,
+                    "end": segment.end,
+                    "avg_logprob": segment.avg_logprob,
+                    "no_speech_prob": segment.no_speech_prob,
+                    "compression_ratio": segment.compression_ratio,
+                }
+            )
             text.append(segment.text.strip())
             words.extend(
                 {"word": w.word, "start": w.start, "end": w.end, "probability": w.probability}
                 for w in segment.words or []
             )
+        self.details = {"backend": "faster_whisper", "device": "cpu", "language": info.language, "segments": statistics}
         return " ".join(text), words
 
 
@@ -124,6 +135,15 @@ class Scorer:
         return {**self.metadata, "peak": float(scores.max()) if len(scores) else 0.0}
 
 
+def _validate_runtime(stt_backend: str, stt_device: str, threads: int) -> None:
+    if stt_backend not in {"faster_whisper", "torch_whisper"} or stt_device not in {"cpu", "gpu"}:
+        raise ProjectError("Unbekannte STT-Engine oder Gerät")
+    if stt_backend == "faster_whisper" and stt_device != "cpu":
+        raise ProjectError("GPU-STT verwendet torch_whisper; faster_whisper bleibt CPU")
+    if type(threads) is not int or not 1 <= threads <= 32:
+        raise ProjectError("Datenprüfung benötigt 1 bis 32 Threads")
+
+
 def run(
     project: Project,
     extra: list[tuple[str, Path]],
@@ -133,8 +153,53 @@ def run(
     phrases: list[str] | None = None,
     threads: int = 4,
     teachers: list[Path] | None = None,
+    stt_backend: str = "faster_whisper",
+    stt_device: str = "cpu",
+    stt_language: str | None = None,
+    stt_cache: Path | None = None,
+    verification_model: str = "",
+) -> dict:
+    from contextlib import nullcontext
+
+    from .gpu import lease
+
+    _validate_runtime(stt_backend, stt_device, threads)
+    with lease("STT-Datenprüfung") if stt_device == "gpu" else nullcontext():
+        return _run(
+            project,
+            extra,
+            output,
+            stt_model,
+            models,
+            phrases,
+            threads,
+            teachers,
+            stt_backend,
+            stt_device,
+            stt_language,
+            stt_cache,
+            verification_model,
+        )
+
+
+def _run(
+    project: Project,
+    extra: list[tuple[str, Path]],
+    output: Path,
+    stt_model: str = "small",
+    models: list[Path] | None = None,
+    phrases: list[str] | None = None,
+    threads: int = 4,
+    teachers: list[Path] | None = None,
+    stt_backend: str = "faster_whisper",
+    stt_device: str = "cpu",
+    stt_language: str | None = None,
+    stt_cache: Path | None = None,
+    verification_model: str = "",
 ) -> dict:
     """Schreibt private JSONL-Berichte; wiederholt nur geänderte/fehlgeschlagene Clips."""
+    _validate_runtime(stt_backend, stt_device, threads)
+    language = stt_language or project.config["language"]
     items = inventory(project, extra)
     if not items:
         raise ProjectError("Keine Aufnahmen für die Datenprüfung vorhanden")
@@ -144,12 +209,15 @@ def run(
     if teachers:
         from .teacher import Teacher
 
-        teacher_scorers = [Teacher(path) for path in teachers]
+        teacher_scorers = [Teacher(path, device=stt_device, threads=threads) for path in teachers]
     else:
         teacher_scorers = []
     config = {
         "stt_model": stt_model,
-        "language": project.config["language"],
+        "language": language,
+        "stt_backend": stt_backend,
+        "stt_device": stt_device,
+        "verification_model": verification_model,
         "phrases": phrases,
         "models": [s.metadata for s in scorers],
         "version": 2,
@@ -168,6 +236,7 @@ def run(
             if row.get("signature") == signature and not row.get("error"):
                 cache[row["sha256"]] = row
     recognizer = None
+    verifier = None
     counts: Counter = Counter()
     rows = []
     # Einzelne Ergebnisse bleiben bei einem Abbruch für den nächsten Aufruf erhalten.
@@ -182,9 +251,26 @@ def run(
                     if len(samples) == 0 or not np.isfinite(samples).all():
                         raise ValueError("Leere oder ungültige Audiodaten")
                     if recognizer is None:
-                        recognizer = Recognizer(stt_model, project.config["language"], threads)
+                        if stt_backend == "torch_whisper":
+                            from .stt import TorchRecognizer
+
+                            recognizer = TorchRecognizer(
+                                stt_model, language, threads, stt_device, stt_cache or project.path("models", "stt")
+                            )
+                        else:
+                            recognizer = Recognizer(stt_model, language, threads)
                     transcript, words = recognizer(samples)
+                    if verification_model:
+                        if verifier is None:
+                            verifier = Recognizer(verification_model, language, threads)
+                        verified_text, verified_words = verifier(samples)
+                        row["verification"] = {
+                            "transcript": verified_text,
+                            "words": verified_words,
+                            "stt": getattr(verifier, "details", {}),
+                        }
                     row.update(
+                        stt=getattr(recognizer, "details", {}),
                         duration_seconds=len(samples) / audio.RATE,
                         transcript=transcript,
                         words=words,

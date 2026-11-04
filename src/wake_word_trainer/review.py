@@ -1,20 +1,24 @@
-"""Read-only Collector review snapshots and independent STT/model analysis."""
+"""Collector review: read-only by default; explicit negative policy can change labels."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
+from .datasets import provenance_fields
 from .project import Project, ProjectError
 from .recordings import SAFE_NAME, read_token
 
 REVIEW_CATEGORIES = {"triggers", "needs_review", "rejected_transcript"}
 MAX_AUDIO_BYTES = 4 * 1024 * 1024
+MAX_JSON_BYTES = 8 * 1024 * 1024
+ORIGIN_KEYS = ("category", "device", "filename", "sha256", "created_at", "relative_path")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -26,6 +30,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def _get(url: str, token: str):
     request = urllib.request.Request(url, headers={"X-Wakeword-Token": token})
     return urllib.request.build_opener(_NoRedirect()).open(request, timeout=60)
+
+
+def _read_json(response):
+    body = response.read(MAX_JSON_BYTES + 1)
+    if len(body) > MAX_JSON_BYTES:
+        raise ProjectError("Collector-Prüfantwort ist zu groß")
+    return json.loads(body)
+
+
+def _origin(item: dict) -> dict:
+    # Reuse the dataset contract, including its validation. No group IDs are
+    # inferred from paths or devices; multiple origins remain separate.
+    result = {key: item.get(key) for key in ORIGIN_KEYS} | provenance_fields(item)
+    source_hash = item.get("source_upload_sha256")
+    if source_hash is not None:
+        if not isinstance(source_hash, str) or not re.fullmatch("[a-f0-9]{64}", source_hash):
+            raise ProjectError("Ungültige Quellaufnahme-Prüfsumme im Prüfbestand")
+        result["source_upload_sha256"] = source_hash
+    return result
 
 
 def fetch(project: Project, output: Path, device: str = "", created_after: str = "", limit: int = 500) -> dict:
@@ -49,10 +72,7 @@ def fetch(project: Project, output: Path, device: str = "", created_after: str =
     query = urllib.parse.urlencode({"device": device, "created_after": created_after, "limit": limit})
     try:
         with _get(base + prefix + "?" + query, token) as response:
-            body = response.read(8 * 1024 * 1024 + 1)
-            if len(body) > 8 * 1024 * 1024:
-                raise ProjectError("Collector-Prüfliste ist zu groß")
-            listing = json.loads(body)
+            listing = _read_json(response)
     except urllib.error.HTTPError as err:
         if err.code == 404:
             raise ProjectError("Collector-Prüfschnittstelle fehlt; Wake Word Collector in HACS aktualisieren") from err
@@ -62,6 +82,7 @@ def fetch(project: Project, output: Path, device: str = "", created_after: str =
     items = listing.get("clips", [])
     if not isinstance(items, list) or len(items) > limit:
         raise ProjectError("Ungültiger Prüfbestand vom Collector")
+    locations = set()
     for item in items:
         if not isinstance(item, dict):
             raise ProjectError("Ungültiger Datensatz im Prüfbestand")
@@ -77,6 +98,11 @@ def fetch(project: Project, output: Path, device: str = "", created_after: str =
             or item.get("audio_url") != f"{prefix}/{category}/{node}/{name}"
         ):
             raise ProjectError("Unsicherer oder nicht passender Audioverweis im Prüfbestand")
+        _origin(item)
+        location = (category, node, name)
+        if location in locations:
+            raise ProjectError("Mehrdeutiger Audioverweis im Prüfbestand")
+        locations.add(location)
     if output.exists():
         raise ProjectError("Prüfausgabe existiert bereits; einen neuen Snapshot-Ordner wählen")
     output.mkdir(parents=True, mode=0o700)
@@ -120,9 +146,20 @@ def run(
     threads: int = 4,
     models: list[Path] | None = None,
     teachers: list[Path] | None = None,
+    stt_backend: str = "faster_whisper",
+    stt_device: str = "cpu",
+    stt_language: str | None = None,
+    stt_cache: Path | None = None,
+    verification_model: str = "",
+    negative_policy: Path | None = None,
 ) -> dict:
     from .audit import run as audit
+    from .consensus import decide, load_policy
 
+    policy = load_policy(negative_policy) if negative_policy else None
+    if policy and (stt_backend != "torch_whisper" or not verification_model or not teachers):
+        raise ProjectError("Automatische Negativfreigabe benötigt Torch-STT, zweite STT und geprüften Teacher")
+    stt_cache = stt_cache or project.path("models", "stt")
     snapshot = fetch(project, output, device, created_after, limit)
     if not snapshot["clips"]:
         result = {
@@ -150,15 +187,34 @@ def run(
             [],
             threads,
             teachers or [],
+            stt_backend=stt_backend,
+            stt_device=stt_device,
+            stt_language=stt_language,
+            stt_cache=stt_cache,
+            verification_model=verification_model,
         )
-        by_hash = {item["sha256"]: item for item in snapshot["clips"]}
+        by_hash = {}
+        for item in snapshot["clips"]:
+            by_hash.setdefault(item["sha256"], []).append(_origin(item))
         evidence = []
+        seen = set()
         for line in (output / "audit" / "clips.jsonl").read_text().splitlines():
             item = json.loads(line)
-            origin = by_hash[item["sha256"]]
+            digest = item.get("sha256")
+            if not isinstance(digest, str) or digest not in by_hash or digest in seen:
+                raise ProjectError("Audit-Prüfsumme ist unbekannt oder mehrdeutig")
+            seen.add(digest)
+            origins = by_hash[digest]
+            # Audit deduplicates content, not recording provenance. Never pick
+            # one of several source events silently as the target of a POST.
+            origin = origins[0] if len(origins) == 1 else {key: None for key in ORIGIN_KEYS}
             evidence.append(
-                {key: origin.get(key) for key in ("category", "device", "filename", "sha256", "created_at")}
-                | {key: item.get(key) for key in ("transcript", "findings", "scores", "teachers", "error")}
+                origin
+                | {"sha256": digest, "origins": origins, "origin_ambiguous": len(origins) != 1}
+                | {
+                    key: item.get(key)
+                    for key in ("transcript", "words", "stt", "verification", "findings", "scores", "teachers", "error")
+                }
             )
         result = {
             **summary,
@@ -168,7 +224,45 @@ def run(
             "labels_changed": False,
             "output": str(output),
         }
-    result.update(created_at=datetime.now(UTC).isoformat(), run_id=output.name)
+    if policy:
+        result["decisions"] = []
+        positives = [project.config["wake_word"], *project.config["tts"]["phrases"]]
+        for row in result["clips"]:
+            decision = decide(row, positives, policy)
+            row["decision"] = decision
+            if decision["eligible"]:
+                prefix = f"/api/wake_word_collector/export/{urllib.parse.quote(project.slug)}/review"
+                url = project.config["collector"]["url"].rstrip("/") + prefix
+                url += f"/{row['category']}/{row['device']}/{row['filename']}"
+                body = {
+                    "sha256": row["sha256"],
+                    "decision": "negative",
+                    "review_id": output.name,
+                    "teacher_hashes": decision["teacher_hashes"],
+                    "reason": "known_negative_teacher_stt_consensus",
+                }
+                request = urllib.request.Request(
+                    url,
+                    data=json.dumps(body).encode(),
+                    method="POST",
+                    headers={"X-Wakeword-Token": read_token(project), "Content-Type": "application/json"},
+                )
+                try:
+                    with urllib.request.build_opener(_NoRedirect()).open(request, timeout=60) as response:
+                        applied = _read_json(response)
+                    if (
+                        not isinstance(applied, dict)
+                        or applied.get("category") != "negatives"
+                        or applied.get("sha256") != row["sha256"]
+                    ):
+                        raise ProjectError("Collector bestätigt Negativentscheidung nicht")
+                    row["application"] = {"state": "applied", "category": "negatives"}
+                except (urllib.error.URLError, ProjectError, json.JSONDecodeError, UnicodeError, TimeoutError) as err:
+                    row["application"] = {"state": "failed", "error": str(err)}
+                result["decisions"].append({"sha256": row["sha256"], **row["application"]})
+        result["labels_changed"] = sum(d["state"] == "applied" for d in result["decisions"])
+        result["application_errors"] = sum(d["state"] == "failed" for d in result["decisions"])
+    result.update(created_at=datetime.now(timezone.utc).isoformat(), run_id=output.name)
     target = project.path("review.json")
     temporary = target.with_suffix(".tmp")
     temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2))

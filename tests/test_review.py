@@ -19,7 +19,7 @@ from wake_word_trainer.state import State, read
 PREFIX = "/api/wake_word_collector/export/hey_nova/review"
 
 
-def setup_collector(tmp_path, server, *, item_changes=None, listing_changes=None):
+def setup_collector(tmp_path, server, *, item_changes=None, listing_changes=None, additional_items=()):
     body = b"RIFF" + b"0" * 100
     item = {
         "category": "triggers",
@@ -29,18 +29,16 @@ def setup_collector(tmp_path, server, *, item_changes=None, listing_changes=None
         "audio_url": PREFIX + "/triggers/bath/test.wav",
     }
     item.update(item_changes or {})
-    listing = {"labels_confirmed": False, "clips": [item], "total": 1, "truncated": False}
+    clips = [item, *additional_items]
+    listing = {"labels_confirmed": False, "clips": clips, "total": len(clips), "truncated": False}
     listing.update(listing_changes or {})
 
     def protected(headers, data):
         return (200, data) if headers.get("X-Wakeword-Token") == "private-test-token" else (401, b"")
 
-    fake = server(
-        {
-            PREFIX: lambda headers: protected(headers, json.dumps(listing).encode()),
-            PREFIX + "/triggers/bath/test.wav": lambda headers: protected(headers, body),
-        }
-    )
+    routes = {entry["audio_url"]: lambda headers: protected(headers, body) for entry in listing["clips"]}
+    routes[PREFIX] = lambda headers: protected(headers, json.dumps(listing).encode())
+    fake = server(routes)
     token = tmp_path / "collector.token"
     token.write_text("private-test-token")
     project = Project.create(tmp_path / "p", "Hey Nova", collector={"url": fake.url, "token_file": str(token)})
@@ -100,9 +98,16 @@ def test_empty_review_and_completion_never_offer_old_model(tmp_path, server):
 
 
 def test_analysis_maps_evidence_to_collector_without_training_import(tmp_path, server, monkeypatch):
-    project, _, _ = setup_collector(tmp_path, server)
+    provenance = {
+        "source_upload_sha256": "c" * 64,
+        "parent_recording_id": "parent-fixture",
+        "session_id": "session-fixture",
+        "speaker_id": "speaker-fixture",
+        "capture_generation": "capture-fixture",
+    }
+    project, _, _ = setup_collector(tmp_path, server, item_changes=provenance)
 
-    def audit(shadow, sources, output, *args):
+    def audit(shadow, sources, output, *args, **kwargs):
         assert shadow.root != project.root
         assert sources[0][0] == "unlabelled"
         output.mkdir()
@@ -121,6 +126,10 @@ def test_analysis_maps_evidence_to_collector_without_training_import(tmp_path, s
     result = run(project, tmp_path / "snapshot")
     assert result["clips"][0]["device"] == "bath"
     assert result["clips"][0]["transcript"] == "synthetic test speech"
+    for field, value in provenance.items():
+        assert result["clips"][0][field] == value
+        assert result["clips"][0]["origins"][0][field] == value
+    assert result["clips"][0]["origin_ambiguous"] is False
     assert not project.recordings.exists()
 
 
@@ -226,3 +235,235 @@ def test_service_review_endpoint_requires_token_and_disables_caching(tmp_path):
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=3)
+
+
+def test_isolated_gpu_review_uses_configured_worker_without_loader_mix(tmp_path, monkeypatch):
+    project = Project.create(tmp_path / "p", "Hey Nova")
+    token = tmp_path / "token"
+    token.write_text("s" * 32)
+    service = Service(
+        {
+            "project": str(project.root),
+            "token_file": str(token),
+            "profiles": {
+                "high": {
+                    "kind": "review",
+                    "stt_backend": "torch_whisper",
+                    "stt_device": "gpu",
+                    "worker_python": sys.executable,
+                    "isolated_runtime": True,
+                    "skip_student": True,
+                }
+            },
+        }
+    )
+    monkeypatch.setenv("ROCM_PATH", "/old/rocm")
+    monkeypatch.setenv("LD_PRELOAD", "/old/lib.so")
+    monkeypatch.setattr(service.resources, "acquire", lambda: None)
+    real = subprocess.Popen
+    commands = []
+
+    def launch(command, **kwargs):
+        commands.append(command)
+        assert "ROCM_PATH" not in kwargs["env"] and "LD_PRELOAD" not in kwargs["env"]
+        return real([sys.executable, "-c", "pass"], **kwargs)
+
+    monkeypatch.setattr("wake_word_trainer.service.subprocess.Popen", launch)
+    assert service.start("high")[0] == 202
+    service.watcher.join(timeout=5)
+    assert "--stt-device" in commands[0] and "--skip-student" in commands[0]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "confirmed",
+        "no_policy",
+        "shared_partial_phrase",
+        "extra_words",
+        "teacher_positive",
+        "no_calibration",
+        "teacher_hash_mismatch",
+        "verification_error",
+        "boolean_confidence",
+        "ambiguous_origins",
+        "audit_hash_mismatch",
+        "post_oversize",
+        "post_hash_mismatch",
+        "post_not_object",
+        "post_invalid_json",
+        "post_invalid_utf8",
+    ],
+)
+def test_policy_review_writes_only_clear_verified_evidence(tmp_path, server, monkeypatch, case):
+    import io
+    import urllib.request
+
+    import yaml
+
+    from wake_word_trainer.review import MAX_JSON_BYTES
+
+    extra = []
+    if case == "ambiguous_origins":
+        extra = [
+            {
+                "category": "triggers",
+                "device": "office",
+                "filename": "same-audio.wav",
+                "audio_url": PREFIX + "/triggers/office/same-audio.wav",
+                "session_id": "second-session",
+                "speaker_id": "second-speaker",
+                "source_upload_sha256": "d" * 64,
+            }
+        ]
+    project, _, _ = setup_collector(
+        tmp_path,
+        server,
+        item_changes={"session_id": "first-session", "source_upload_sha256": "c" * 64},
+        additional_items=extra,
+    )
+    teacher_hash = "a" * 64
+    policy = tmp_path / "negative_policy.yaml"
+    targets = ["hey nova", "start vacuuming"] if case == "teacher_positive" else ["hey nova"]
+    settings = {
+        "known_negative_phrases": ["start vacuuming"],
+        "allowed_teacher_hashes": [teacher_hash],
+        "teacher_calibrations": {
+            teacher_hash: {"target_phrases": targets, "evidence": "private-fixture/calibration.json"}
+        },
+    }
+    if case == "no_calibration":
+        settings.pop("teacher_calibrations")
+    policy.write_text(yaml.safe_dump(settings))
+
+    def audit(shadow, sources, output, *args, **kwargs):
+        output.mkdir()
+        snapshot = json.loads((sources[0][1].parent / "snapshot.json").read_text())
+        segment = {"avg_logprob": -0.1, "no_speech_prob": 0.01}
+        words = [{"word": "start", "probability": 0.99}, {"word": "vacuuming", "probability": 0.99}]
+        row = {
+            "sha256": snapshot["clips"][0]["sha256"],
+            "transcript": "Start vacuuming.",
+            "words": words,
+            "stt": {"backend": "torch_whisper", "segments": [segment]},
+            "verification": {
+                "transcript": "Start vacuuming.",
+                "words": words,
+                "stt": {"backend": "faster_whisper", "segments": [segment]},
+            },
+            "teachers": [{"sha256": teacher_hash, "peak": 0.03, "target_phrases": targets}],
+            "scores": [],
+            "findings": ["negative_candidate"],
+        }
+        if case in {"shared_partial_phrase", "extra_words"}:
+            row["transcript"] = "Start vacuuming please"
+            row["verification"]["transcript"] = (
+                "Start vacuuming now" if case == "shared_partial_phrase" else "Start vacuuming please"
+            )
+            for observation in (row, row["verification"]):
+                observation["words"] = [
+                    {"word": word, "probability": 0.99} for word in observation["transcript"].split()
+                ]
+        if case == "teacher_hash_mismatch":
+            row["teachers"][0]["sha256"] = "b" * 64
+        if case == "verification_error":
+            row["verification"]["error"] = "synthetic failure"
+        if case == "boolean_confidence":
+            row["words"][0]["probability"] = True
+        if case == "audit_hash_mismatch":
+            row["sha256"] = "f" * 64
+        (output / "clips.jsonl").write_text(json.dumps(row) + "\n")
+        return {"unique_clips": 1, "findings": {"negative_candidate": 1}}
+
+    monkeypatch.setattr("wake_word_trainer.audit.run", audit)
+    real_builder = urllib.request.build_opener
+    posts = []
+    response_reads = []
+
+    class Response(io.BytesIO):
+        def read(self, size=-1):
+            response_reads.append(size)
+            return super().read(size)
+
+    class Opener:
+        def __init__(self, *handlers):
+            self.delegate = real_builder(*handlers)
+
+        def open(self, request, timeout):
+            if request.get_method() != "POST":
+                return self.delegate.open(request, timeout=timeout)
+            body = json.loads(request.data)
+            posts.append(body)
+            assert request.headers["X-wakeword-token"] == "private-test-token"
+            response_body = json.dumps({"category": "negatives", "sha256": body["sha256"]}).encode()
+            if case == "post_oversize":
+                response_body = b" " * (MAX_JSON_BYTES + 1)
+            elif case == "post_hash_mismatch":
+                response_body = json.dumps({"category": "negatives", "sha256": "f" * 64}).encode()
+            elif case == "post_not_object":
+                response_body = b"[]"
+            elif case == "post_invalid_json":
+                response_body = b"{"
+            elif case == "post_invalid_utf8":
+                response_body = b"\xff"
+            return Response(response_body)
+
+    monkeypatch.setattr("wake_word_trainer.review.urllib.request.build_opener", Opener)
+
+    def execute():
+        return run(
+            project,
+            tmp_path / "snapshot",
+            stt_backend="torch_whisper",
+            verification_model="medium",
+            teachers=[tmp_path / "approved.pt"],
+            negative_policy=None if case == "no_policy" else policy,
+        )
+
+    if case == "audit_hash_mismatch":
+        with pytest.raises(ProjectError, match="Audit-Prüfsumme"):
+            execute()
+        assert posts == []
+        return
+    result = execute()
+    expected_posts = case == "confirmed" or case.startswith("post_")
+    assert len(posts) == int(expected_posts)
+    assert result["labels_changed"] == int(case == "confirmed")
+    assert result.get("application_errors", 0) == int(case.startswith("post_"))
+    if posts:
+        assert posts[0]["decision"] == "negative"
+        assert response_reads == [MAX_JSON_BYTES + 1]
+    if case == "ambiguous_origins":
+        row = result["clips"][0]
+        assert row["origin_ambiguous"] is True
+        assert row["device"] is None and row["filename"] is None
+        assert row["decision"]["reason"] == "ambiguous_origin"
+        assert {origin["session_id"] for origin in row["origins"]} == {"first-session", "second-session"}
+        assert {origin["source_upload_sha256"] for origin in row["origins"]} == {"c" * 64, "d" * 64}
+    assert not project.recordings.exists()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"session_id": True}, {"speaker_id": ""}, {"capture_generation": 2}, {"source_upload_sha256": "invalid"}],
+)
+def test_review_uses_existing_provenance_validation_before_writing(tmp_path, server, changes):
+    project, _, _ = setup_collector(tmp_path, server, item_changes=changes)
+    with pytest.raises(ProjectError):
+        fetch(project, tmp_path / "snapshot")
+    assert not (tmp_path / "snapshot").exists()
+
+
+def test_duplicate_location_does_not_overwrite_a_source_event(tmp_path, server):
+    duplicate = {
+        "category": "triggers",
+        "device": "bath",
+        "filename": "test.wav",
+        "audio_url": PREFIX + "/triggers/bath/test.wav",
+        "session_id": "second-session",
+    }
+    project, fake, _ = setup_collector(tmp_path, server, additional_items=[duplicate])
+    with pytest.raises(ProjectError, match="Mehrdeutiger Audioverweis"):
+        fetch(project, tmp_path / "snapshot")
+    assert len(fake.requests) == 1
+    assert not (tmp_path / "snapshot").exists()

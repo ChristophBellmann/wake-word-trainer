@@ -159,12 +159,13 @@ def cmd_audit(args: argparse.Namespace) -> None:
 
 
 def cmd_review(args: argparse.Namespace) -> None:
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
 
     from .review import run
     from .state import State, now
 
-    os.environ.update(CUDA_VISIBLE_DEVICES="-1", HIP_VISIBLE_DEVICES="-1", ROCR_VISIBLE_DEVICES="-1")
+    if args.stt_device == "cpu":
+        os.environ.update(CUDA_VISIBLE_DEVICES="-1", HIP_VISIBLE_DEVICES="-1", ROCR_VISIBLE_DEVICES="-1")
     project = Project.load(args.project)
     state = State(project)
     state.update(
@@ -175,9 +176,9 @@ def cmd_review(args: argparse.Namespace) -> None:
         best_model_available=False,
         message="Unbestätigte Collector-Aufnahmen werden geprüft",
     )
-    output = project.resolve(args.output or datetime.now(UTC).strftime("review/run_%Y%m%dT%H%M%S_%f"))
+    output = project.resolve(args.output or datetime.now(timezone.utc).strftime("review/run_%Y%m%dT%H%M%S_%f"))
     models = [project.resolve(path) for path in args.model]
-    if not models:
+    if not models and not args.skip_student:
         reference = project.config["deployment"]["reference_model"]
         if reference and project.resolve(reference).is_file():
             models = [project.resolve(reference)]
@@ -192,21 +193,23 @@ def cmd_review(args: argparse.Namespace) -> None:
             threads=args.threads,
             models=models,
             teachers=[project.resolve(path) for path in args.teacher],
+            stt_backend=args.stt_backend,
+            stt_device=args.stt_device,
+            stt_language=args.stt_language,
+            stt_cache=project.resolve(args.stt_cache) if args.stt_cache else None,
+            verification_model=args.verification_model,
+            negative_policy=project.resolve(args.negative_policy) if args.negative_policy else None,
         )
-        if result.get("findings", {}).get("processing_error"):
+        if result.get("findings", {}).get("processing_error") or result.get("application_errors"):
             raise ProjectError("Einzelne Prüfaufnahmen sind fehlgeschlagen; privater Bericht vorhanden")
     except Exception as err:
         state.update(state="failed", ended_at=now(), exit_code=1, last_error=str(err), best_model_available=False)
         raise
+    message = f"{result['unique_clips']} Aufnahmen geprüft; {int(result.get('labels_changed', 0))} Negative übernommen"
     state.update(
-        state="completed",
-        phase="done",
-        ended_at=now(),
-        exit_code=0,
-        best_model_available=False,
-        message=f"{result['unique_clips']} Aufnahmen geprüft; Labels unverändert",
+        state="completed", phase="done", ended_at=now(), exit_code=0, best_model_available=False, message=message
     )
-    print(f"{result['unique_clips']} Collector-Aufnahmen geprüft; Labels unverändert. Bericht: {output}")
+    print(f"{message}. Bericht: {output}")
 
 
 def cmd_teacher(args: argparse.Namespace) -> None:
@@ -229,6 +232,11 @@ def cmd_teacher(args: argparse.Namespace) -> None:
             initial_model=project.resolve(args.initial_model) if args.initial_model else None,
             balanced_sources=args.balanced_sources,
             architecture=args.architecture,
+            learning_rate=args.learning_rate,
+            extra_positive=[project.resolve(path) for path in args.positive_folder],
+            extra_eval_positive=[project.resolve(path) for path in args.eval_positive_folder],
+            extra_positive_weight=args.positive_weight,
+            target_phrases=args.target_phrase,
         )
         print(f"Teacher gespeichert: {checkpoint}")
     else:
@@ -462,9 +470,19 @@ def parser() -> argparse.ArgumentParser:
     review.add_argument("--limit", type=int, default=500)
     review.add_argument("--stt-model", default="medium")
     review.add_argument("--threads", type=int, default=4)
-    review.add_argument("--model", action="append", default=[])
+    review_models = review.add_mutually_exclusive_group()
+    review_models.add_argument("--model", action="append", default=[])
+    review_models.add_argument(
+        "--skip-student", action="store_true", help="nur STT und Teacher, ohne TensorFlow-Import"
+    )
     review.add_argument("--teacher", action="append", default=[])
     review.add_argument("--profile", default="review")
+    review.add_argument("--negative-policy", help="private geprüfte Richtlinie für begrenzte automatische Negative")
+    review.add_argument("--stt-backend", choices=["faster_whisper", "torch_whisper"], default="faster_whisper")
+    review.add_argument("--stt-device", choices=["cpu", "gpu"], default="cpu")
+    review.add_argument("--stt-language", help="Sprachcode oder auto für gemischte Ansagen")
+    review.add_argument("--stt-cache", help="privater Modellcache, für große Modelle genügend Platz vorsehen")
+    review.add_argument("--verification-model", default="", help="zweites CPU-STT-Modell zur Gegenprüfung")
     data = sub.add_parser("data", help="Datenquellen mit Rollen übernehmen und vor dem Training prüfen")
     data_sub = data.add_subparsers(dest="data_command", required=True)
     data_import = data_sub.add_parser("import")
@@ -514,6 +532,17 @@ def parser() -> argparse.ArgumentParser:
     teacher_import.add_argument("--output", default="teacher/model.pt")
     teacher_train = teacher_sub.add_parser("train")
     teacher_train.add_argument("--epochs", type=int, default=30)
+    teacher_train.add_argument("--learning-rate", type=float, default=0.001)
+    teacher_train.add_argument(
+        "--positive-folder", action="append", default=[], help="Teacher-only Positive, ohne Dauerfilter des Students"
+    )
+    teacher_train.add_argument(
+        "--eval-positive-folder", action="append", default=[], help="getrennter Teacher-only Prüfbestand"
+    )
+    teacher_train.add_argument("--positive-weight", type=float, default=3.0)
+    teacher_train.add_argument(
+        "--target-phrase", action="append", help="Teacher-Ziele ausdrücklich im Checkpoint dokumentieren"
+    )
     teacher_train.add_argument("--batch-size", type=int, default=128)
     teacher_train.add_argument("--seed", type=int, default=1337)
     teacher_train.add_argument("--device", choices=["auto", "gpu", "cpu"], default="auto")
@@ -572,7 +601,8 @@ def main(argv: list[str] | None = None) -> int:
         prepared = environment()
         if any(prepared.get(key) != os.environ.get(key) for key in ("LD_LIBRARY_PATH", "LD_PRELOAD")):
             prepared["WAKE_WORD_TRAINER_RUNTIME_READY"] = "1"
-            os.execve(sys.executable, [sys.executable, "-m", "wake_word_trainer", *sys.argv[1:]], prepared)
+            # Preserve isolated worker bootstrap/source binding across loader reexec.
+            os.execve(sys.executable, [sys.executable, *sys.orig_argv[1:]], prepared)
     try:
         COMMANDS[args.command](args)
     except ProjectError as err:

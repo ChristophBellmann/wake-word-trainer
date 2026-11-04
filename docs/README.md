@@ -45,3 +45,6 @@ und [HTTP-API](api.md) enthalten die Referenz.
 Private Aktivierungswörter, individuelle Modelle, Sprachaufnahmen und
 Installationshistorien gehören in die jeweiligen privaten Projekte.
 Die öffentliche Anleitung verwendet neutrale Beispiele.
+
+Große lokale GPU-STT und eine ausdrücklich konfigurierte Negativrichtlinie
+sind im [HA-Prüfablauf](home-assistant-review.md) erklärt.

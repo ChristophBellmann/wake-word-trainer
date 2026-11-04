@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wake-word-trainer"
-version = "0.6.1"
+version = "0.6.2"
 description = "Train a microWakeWord model for ESPHome from your own recordings (Wake Word Collector) plus synthetic speech"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -33,6 +33,7 @@ tts = [
 # faster-whisper still uses av.open(metadata_errors=...), removed in PyAV 19.
 segment = ["faster-whisper>=1.1,<2", "av>=11,<19"]
 teacher = ["torch>=2.1"]
+stt = ["openai-whisper>=20250625"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]

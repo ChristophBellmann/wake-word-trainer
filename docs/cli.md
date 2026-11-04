@@ -18,7 +18,7 @@ standardmäßig `<projekt>/downloads`. Optionen erscheinen auch mit `--help`.
 | `experiment prepare/run` | eingefrorene Seed-Vergleiche ohne Rollout |
 | `benchmark` | [GPU-Durchsatz](gpu-training-and-benchmarks.md) in getrennten Prozessen mit Aufwärmen und Wiederholungen |
 | `audit` | lokale Quellen mit STT und optionalen Modellen prüfen, ohne Labels zu ändern |
-| `review` | ungeprüfte Aufnahmen über HA abrufen; `--device`, `--since`, `--limit`, `--stt-model`, `--threads`, `--model`, `--teacher` |
+| `review` | ungeprüfte Aufnahmen über HA abrufen; `--device`, `--since`, `--limit`, `--stt-model`, `--threads`, `--model`, `--teacher`, `--stt-backend`, `--stt-device`, `--stt-language`, `--verification-model`, optionale `--negative-policy` |
 | `generate` | Piper-Sprache erzeugen; `--force` neu erzeugen |
 | `features` | augmentierte Microfrontend-Features bauen |
 | `train` | Student trainieren; `--restart` ohne alten Checkpoint |
