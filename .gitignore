@@ -6,3 +6,7 @@ __pycache__/
 # Projects hold voice recordings and large downloads: never commit them.
 projects/
 downloads/
+
+# Generierte Paketartefakte bleiben lokal.
+build/
+dist/
