@@ -233,6 +233,52 @@ automatische Labeländerung. Nach Modell- oder Zielwechsel die Freigabe erneut
 prüfen. Ein niedriger Score eines unpassenden oder unkalibrierten Teachers
 ist kein Negativbeweis.
 
+### Auslösungen ohne Aktivierungswort (ab Trainer 0.6.3, Collector 0.5.8)
+
+Die Phrasenregel übernimmt nur wörtlich bekannte Ansagen. Räuspern, Husten
+oder ein beliebiger Gesprächsfetzen bleiben damit offen. Die zusätzliche,
+ausdrücklich einzuschaltende Regel `no_wake_word` übernimmt eine Auslösung,
+wenn **jeder** freigegebene, kalibrierte Teacher höchstens `max_teacher_score`
+liefert und **keines** von zwei verschiedenen STT-Modellen ein
+Aktivierungswort schreibt:
+
+```yaml
+no_wake_word: true
+no_wake_word_devices: [bedroom, office]   # nur Geräte mit geprüftem Teacher
+protected_phrases: [hey nowa, nova]       # zusätzliche Schreibweisen, die sperren
+allowed_teacher_hashes: ["<SHA-256 des geprüften Teachers>"]
+teacher_calibrations:
+  "<SHA-256 des geprüften Teachers>":
+    target_phrases: [hey nova]
+    evidence: private-reviews/teacher-validation.json
+max_teacher_score: 0.1
+```
+
+Der Teacher trägt die Entscheidung, die STT hat nur ein Vetorecht. Whisper
+verfehlt kurze Aktivierungswörter häufig, auch mit großen Modellen; „kein
+Aktivierungswort im Text“ ist deshalb allein nie ein Negativbeweis. Die Texte
+dürfen leer sein oder sich unterscheiden. Ein Treffer auf Projekt-, TTS-,
+Teacher- oder `protected_phrases`-Schreibweisen in einem der beiden Texte
+sperrt die Übernahme, ebenso ein STT-Fehler, ein fehlender, unkalibrierter
+oder nicht freigegebener Teacher und eine mehrdeutige Herkunft.
+`known_negative_phrases` darf mit dieser Regel entfallen; beide Regeln können
+nebeneinander stehen. Die Regel kommt ohne Torch-STT aus: zwei
+faster-whisper-Modelle auf der CPU genügen, `stt_model` und
+`verification_model` müssen sich unterscheiden.
+
+`no_wake_word_devices` ist Pflicht und nennt die Collector-Geräte, für die
+der Teacher geprüft wurde. Ein Teacher, der einen Raum sauber trennt, kann
+echte Aufrufe eines anderen Mikrofons nahe null bewerten. Auslösungen anderer
+Geräte bleiben offen (`device_not_calibrated`). Ein lesender Probelauf ohne
+Richtlinie zeigt das: Hören beide STT-Modelle bei niedrigem Teacher-Wert klar
+das Aktivierungswort, taugt der Teacher für dieses Gerät nicht.
+
+Vor dem Einschalten `max_teacher_score` an **eigenen, vom Teacher nie
+gesehenen** bestätigten Aufrufen prüfen: Kein echter Aufruf darf unter der
+Grenze liegen. Die Regel erfasst die leichten Fälle. Auslösungen, die auch
+den Teacher täuschen, bleiben zur Prüfung stehen; gerade sie sind die
+wertvollsten Trainingsbeispiele.
+
 Für diese Schreibwirkung muss der eingesetzte Collector die Negativentscheidung
 per POST an der Audio-Review-Route unterstützen. Nur `triggers` sind erlaubt.
 Vor Aktivierung die Collector-Implementierung gemeinsam prüfen: unveränderter

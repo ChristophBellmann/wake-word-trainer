@@ -157,8 +157,16 @@ def run(
     from .consensus import decide, load_policy
 
     policy = load_policy(negative_policy) if negative_policy else None
-    if policy and (stt_backend != "torch_whisper" or not verification_model or not teachers):
-        raise ProjectError("Automatische Negativfreigabe benötigt Torch-STT, zweite STT und geprüften Teacher")
+    if policy and (not verification_model or not teachers):
+        raise ProjectError("Automatische Negativfreigabe benötigt zweite STT und geprüften Teacher")
+    if policy and stt_backend != "torch_whisper":
+        # Known phrases keep requiring Torch STT plus faster-whisper. The
+        # no-wake-word rule accepts two CPU models only when they differ.
+        if policy["no_wake_word"] is not True or verification_model == stt_model:
+            raise ProjectError(
+                "Automatische Negativfreigabe benötigt Torch-STT oder die Regel no_wake_word mit zwei verschiedenen "
+                "STT-Modellen"
+            )
     stt_cache = stt_cache or project.path("models", "stt")
     snapshot = fetch(project, output, device, created_after, limit)
     if not snapshot["clips"]:
@@ -239,7 +247,7 @@ def run(
                     "decision": "negative",
                     "review_id": output.name,
                     "teacher_hashes": decision["teacher_hashes"],
-                    "reason": "known_negative_teacher_stt_consensus",
+                    "reason": decision["reason"],
                 }
                 request = urllib.request.Request(
                     url,

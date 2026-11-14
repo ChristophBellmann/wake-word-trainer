@@ -467,3 +467,100 @@ def test_duplicate_location_does_not_overwrite_a_source_event(tmp_path, server):
         fetch(project, tmp_path / "snapshot")
     assert len(fake.requests) == 1
     assert not (tmp_path / "snapshot").exists()
+
+
+def no_wake_word_policy(tmp_path, **changes):
+    import yaml
+
+    teacher_hash = "a" * 64
+    settings = {
+        "no_wake_word": True,
+        "no_wake_word_devices": ["bath"],
+        "allowed_teacher_hashes": [teacher_hash],
+        "teacher_calibrations": {
+            teacher_hash: {"target_phrases": ["hey nova"], "evidence": "private-fixture/calibration.json"}
+        },
+        **changes,
+    }
+    path = tmp_path / "negative_policy.yaml"
+    path.write_text(yaml.safe_dump(settings))
+    return path, teacher_hash
+
+
+@pytest.mark.parametrize("case", ["silence", "wake_word_heard", "teacher_high", "other_device"])
+def test_no_wake_word_policy_posts_its_own_reason_with_two_cpu_models(tmp_path, server, monkeypatch, case):
+    import io
+    import urllib.request
+
+    project, _, _ = setup_collector(tmp_path, server)
+    devices = ["kitchen"] if case == "other_device" else ["bath"]
+    policy, teacher_hash = no_wake_word_policy(tmp_path, no_wake_word_devices=devices)
+
+    def audit(shadow, sources, output, *args, **kwargs):
+        output.mkdir()
+        snapshot = json.loads((sources[0][1].parent / "snapshot.json").read_text())
+        peak = 0.6 if case == "teacher_high" else 0.03
+        row = {
+            "sha256": snapshot["clips"][0]["sha256"],
+            "transcript": "Hey Nova." if case == "wake_word_heard" else "",
+            "words": [],
+            "stt": {"backend": "faster_whisper", "segments": []},
+            "verification": {"transcript": "", "words": [], "stt": {"backend": "faster_whisper", "segments": []}},
+            "teachers": [{"sha256": teacher_hash, "peak": peak, "target_phrases": ["hey nova"]}],
+            "scores": [],
+            "findings": ["unclear_audio"],
+        }
+        (output / "clips.jsonl").write_text(json.dumps(row) + "\n")
+        return {"unique_clips": 1, "findings": {"unclear_audio": 1}}
+
+    monkeypatch.setattr("wake_word_trainer.audit.run", audit)
+    real_builder = urllib.request.build_opener
+    posts = []
+
+    class Opener:
+        def __init__(self, *handlers):
+            self.delegate = real_builder(*handlers)
+
+        def open(self, request, timeout):
+            if request.get_method() != "POST":
+                return self.delegate.open(request, timeout=timeout)
+            body = json.loads(request.data)
+            posts.append(body)
+            return io.BytesIO(json.dumps({"category": "negatives", "sha256": body["sha256"]}).encode())
+
+    monkeypatch.setattr("wake_word_trainer.review.urllib.request.build_opener", Opener)
+    result = run(
+        project,
+        tmp_path / "snapshot",
+        stt_model="large-v3",
+        verification_model="medium",
+        teachers=[tmp_path / "approved.pt"],
+        negative_policy=policy,
+    )
+    if case == "silence":
+        assert [post["reason"] for post in posts] == ["no_wake_word_teacher_stt_consensus"]
+        assert posts[0]["decision"] == "negative" and posts[0]["teacher_hashes"] == [teacher_hash]
+        assert result["labels_changed"] == 1
+    else:
+        assert posts == [] and result["labels_changed"] == 0
+        assert result["clips"][0]["decision"]["eligible"] is False
+    assert not project.recordings.exists()
+
+
+@pytest.mark.parametrize(
+    "changes,arguments",
+    [
+        ({}, {"stt_model": "medium", "verification_model": "medium"}),  # one model is no cross-check
+        ({}, {"stt_model": "large-v3", "verification_model": ""}),
+        (
+            {"no_wake_word": False, "no_wake_word_devices": [], "known_negative_phrases": ["start vacuuming"]},
+            {"verification_model": "small"},
+        ),
+    ],
+)
+def test_cpu_only_policy_needs_the_no_wake_word_rule_and_two_different_models(tmp_path, server, changes, arguments):
+    project, _, _ = setup_collector(tmp_path, server)
+    policy, _ = no_wake_word_policy(tmp_path, **changes)
+    with pytest.raises(ProjectError, match="Automatische Negativfreigabe"):
+        run(project, tmp_path / "snapshot", teachers=[tmp_path / "approved.pt"], negative_policy=policy, **arguments)
+    assert not (tmp_path / "snapshot").exists()

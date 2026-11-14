@@ -222,3 +222,132 @@ def test_legacy_hash_allowlist_without_calibration_remains_review_only(tmp_path)
     path = tmp_path / "policy.yaml"
     path.write_text(yaml.safe_dump(policy))
     assert decide(observation(), ["hey nova"], load_policy(path))["eligible"] is False
+
+
+# No-wake-word rule: the teacher decides, both STT models may only veto. ---------
+
+NO_WAKE_WORD_POLICY = {
+    **POLICY,
+    "known_negative_phrases": [],
+    "no_wake_word": True,
+    "no_wake_word_devices": ["bedroom"],
+    "protected_phrases": ["hey nowa"],
+}
+
+
+def silent_trigger():
+    """A throat-clearing style trigger: no words, two CPU STT models, low teacher score."""
+    return {
+        "category": "triggers",
+        "device": "bedroom",
+        "transcript": "",
+        "words": [],
+        "stt": {"backend": "faster_whisper", "segments": []},
+        "teachers": [{"sha256": HASH, "peak": 0.03, "target_phrases": ["hey nova"]}],
+        "verification": {"transcript": "", "words": [], "stt": {"backend": "faster_whisper", "segments": []}},
+    }
+
+
+def test_no_wake_word_rule_accepts_silence_and_differing_speech_with_low_teacher():
+    result = decide(silent_trigger(), ["hey nova"], NO_WAKE_WORD_POLICY)
+    assert result["eligible"] is True
+    assert result["reason"] == "no_wake_word_teacher_stt_consensus"
+    assert result["teacher_hashes"] == [HASH]
+    row = silent_trigger()
+    row["transcript"], row["verification"]["transcript"] = "The instructions or files.", "Thanks a lot."
+    assert decide(row, ["hey nova"], NO_WAKE_WORD_POLICY)["eligible"] is True
+
+
+def test_no_wake_word_rule_is_off_unless_the_policy_enables_it():
+    assert decide(silent_trigger(), ["hey nova"], POLICY)["eligible"] is False
+    assert decide(silent_trigger(), ["hey nova"], {**NO_WAKE_WORD_POLICY, "no_wake_word": "yes"})["eligible"] is False
+
+
+def test_known_phrase_rule_keeps_working_next_to_the_no_wake_word_rule():
+    policy = {**POLICY, "no_wake_word": True, "no_wake_word_devices": ["bedroom"], "protected_phrases": []}
+    result = decide(observation(), ["hey nova"], policy)
+    assert result["eligible"] is True and result["reason"] == "known_negative_teacher_stt_consensus"
+
+
+@pytest.mark.parametrize("side", ["primary", "verification"])
+@pytest.mark.parametrize("text", ["Hey Nova!", "well, hey nova please", "Hey Nowa.", "heynova"])
+def test_either_stt_hearing_a_wake_word_or_protected_spelling_vetoes(side, text):
+    row = silent_trigger()
+    (row if side == "primary" else row["verification"])["transcript"] = text
+    assert decide(row, ["hey nova"], NO_WAKE_WORD_POLICY) == {"eligible": False, "reason": "wake_word_or_disagreement"}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda row: row["teachers"][0].update(peak=0.11),
+        lambda row: row["teachers"][0].update(peak=True),
+        lambda row: row["teachers"][0].update(peak=float("nan")),
+        lambda row: row["teachers"][0].update(sha256="b" * 64),
+        lambda row: row["teachers"][0].update(target_phrases=[]),
+        lambda row: row["teachers"][0].update(error="synthetic failure"),
+        lambda row: row.update(teachers=[]),
+        lambda row: row["teachers"].append({"sha256": HASH, "peak": 0.9, "target_phrases": ["hey nova"]}),
+        lambda row: row.update(category="needs_review"),
+        lambda row: row.update(device="kitchen"),
+        lambda row: row.update(device=None),
+        lambda row: row.pop("device"),
+        lambda row: row.update(error="synthetic failure"),
+        lambda row: row.update(origin_ambiguous=True),
+        lambda row: row.update(transcript=None),
+        lambda row: row.pop("verification"),
+        lambda row: row["verification"].update(error="synthetic failure"),
+        lambda row: row["verification"].update(transcript=None),
+        lambda row: row["stt"].update(error="synthetic failure"),
+        lambda row: row["verification"]["stt"].update(error="synthetic failure"),
+        lambda row: row.update(stt={}),
+        lambda row: row["verification"].update(stt=None),
+    ],
+)
+def test_no_wake_word_rule_fails_closed(change):
+    row = silent_trigger()
+    change(row)
+    assert decide(row, ["hey nova"], NO_WAKE_WORD_POLICY)["eligible"] is False
+
+
+def test_no_wake_word_rule_needs_the_same_teacher_calibration_contract():
+    policy = deepcopy(NO_WAKE_WORD_POLICY)
+    policy["teacher_calibrations"] = {}
+    result = decide(silent_trigger(), ["hey nova"], policy)
+    assert result == {"eligible": False, "reason": "teacher_target_or_calibration_unclear"}
+    # A project target the teacher was not trained for stays unclear.
+    result = decide(silent_trigger(), ["hey nova", "hi nova"], NO_WAKE_WORD_POLICY)
+    assert result == {"eligible": False, "reason": "teacher_target_or_calibration_unclear"}
+
+
+def test_policy_may_omit_known_phrases_only_with_the_no_wake_word_rule(tmp_path):
+    import yaml
+
+    path = tmp_path / "policy.yaml"
+    settings = deepcopy(NO_WAKE_WORD_POLICY)
+    settings.pop("known_negative_phrases")
+    path.write_text(yaml.safe_dump(settings))
+    loaded = load_policy(path)
+    assert loaded["no_wake_word"] is True and loaded["known_negative_phrases"] == []
+    assert decide(silent_trigger(), ["hey nova"], loaded)["eligible"] is True
+    for broken in (
+        {**settings, "no_wake_word": False},
+        {**settings, "no_wake_word": "true"},
+        {**settings, "no_wake_word_devices": []},
+        {**settings, "no_wake_word_devices": "bedroom"},
+        {**settings, "no_wake_word_devices": ["../bedroom"]},
+        {**{k: v for k, v in settings.items() if k != "no_wake_word_devices"}},
+        {**POLICY, "no_wake_word_devices": ["bedroom"]},
+        {**settings, "protected_phrases": "hey nowa"},
+        {**settings, "protected_phrases": [""]},
+        {**settings, "protected_phrases": [7]},
+    ):
+        path.write_text(yaml.safe_dump(broken))
+        with pytest.raises(ProjectError):
+            load_policy(path)
+
+
+def test_a_device_without_calibration_is_never_classified_by_the_no_wake_word_rule():
+    row = silent_trigger()
+    row["device"] = "kitchen"
+    assert decide(row, ["hey nova"], NO_WAKE_WORD_POLICY) == {"eligible": False, "reason": "device_not_calibrated"}
